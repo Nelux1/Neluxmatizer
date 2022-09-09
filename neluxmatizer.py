@@ -27,8 +27,8 @@ print('''\033[1;34m
 
 \033[0m''')
 
+parser = argparse.ArgumentParser(prog="neluxmatizer.py")
 
-parser = argparse.ArgumentParser(Fore.LIGHTWHITE_EX)
 parser.add_argument("-u","--url",
                     dest="url",
                     help="select url to scan",
@@ -54,7 +54,7 @@ parser.add_argument("-l",
                     help="Check a list of URLs.",
                     action='store')
 parser.add_argument("-w",
-                    dest="word",
+                    dest="wordlist",
                     help="wordlist of payloads",
                     action= 'store' )
 parser.add_argument("--xss",
@@ -67,19 +67,21 @@ parser.add_argument("--lfi",
                     action= 'store_true' )                    
 parser.add_argument("--sql",
                     dest="sql",
-                    help="Check SQL paramethers.",
+                    help="Check SQL vulnerability.",
                     action= 'store_true' )
 parser.add_argument("--idor",
                     dest="idor",
-                    help="Check IDOR paramethers.",
+                    help="Check IDOR parameters.",
                     action= 'store_true' )                                         
 parser.add_argument("--ssrf",
                     dest="ssrf",
-                    help="Check SSRF paramethers.",
+                    help="Check SSRF parameters.",
                     action= 'store_true' )                                         
-parser.add_argument('-o','--output' , 
-                     help = 'Output file name [by default it is \'domain.txt\']')                                                            
-args = parser.parse_args()
+parser.add_argument("-o",
+                     dest="output", 
+                     help = 'Output file name')
+                                                                              
+args = parser.parse_args()                                                         
 
 
    
