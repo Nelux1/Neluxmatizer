@@ -90,7 +90,7 @@ def selector():
     url = []
     wordlist=[]
     urls_vulnerables=[]
-    #fname= os.path.join('output','urls_vulnerables.txt')
+    fname= os.path.join('output','urls_vulnerables.txt')
     c=False
     cl=False
     h=False
