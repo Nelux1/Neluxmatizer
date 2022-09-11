@@ -126,11 +126,11 @@ def selector():
      if args.output:
          fname= os.path.join(args.output)
          o=True
-     if args.xss and not args.word:
+     if args.xss:
          x=True
-     if args.lfi and not args.word:       
+     if args.lfi:       
          l=True
-     if args.sql and not args.word:
+     if args.sql:
          s=True                                           
      scan(U,c,cl,h,x,l,s,i,sr,output,fname,o,urls_vulnerables)
      if args.xss and args.word:
@@ -180,11 +180,11 @@ def selector():
      if args.output:
          fname= os.path.join(args.output)
          o=True
-     if args.xss and not args.word:
+     if args.xss:
          x=True
-     if args.sql and not args.word:
+     if args.sql:
          s=True         
-     if args.lfi and not args.word:
+     if args.lfi:
          l=True                                       
      with open(args.usedlist, "r") as f:
          for q in f.readlines():
