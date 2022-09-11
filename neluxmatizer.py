@@ -54,7 +54,7 @@ parser.add_argument("-l",
                     help="Check a list of URLs.",
                     action='store')
 parser.add_argument("-w",
-                    dest="wordlist",
+                    dest="word",
                     help="wordlist of payloads",
                     action= 'store' )
 parser.add_argument("--xss",
