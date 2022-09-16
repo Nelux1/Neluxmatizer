@@ -82,7 +82,7 @@ def sqli(l,wi,urls_vulnerables):
                              urls_vulnerables.append(linea)
                         except:
                             continue
-                        linea= linea.replace(f'={w}','=FUZZ')
+                        linea= linea.replace(f'{w}','=FUZZ')
          else:
              continue
     if found >= 1:
