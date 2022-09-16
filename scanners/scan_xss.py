@@ -58,7 +58,7 @@ def xss(l,wordlist,urls_vulnerables):
          except:
              continue
          linea= linea.replace('%20',' ')
-         linea= linea.replace(f'={li}',limp)
+         linea= linea.replace(f'{li}',limp)
     if found >= 1:
      print()   
      print (f'\033[1;32m[+] Found [{found}] results vulnerable to XSS\033[0m')
