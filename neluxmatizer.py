@@ -9,7 +9,7 @@ from scanners.scan_sqli import sqli
 from scanners.scan_xss import xss
 from scanners.scan_lista import all_list
 from scanners.scan_lfi import lfi
-from parametizer.core.save_it import save_func 
+from parametizer.core.save_it import save_output
 import time 
 start_time = time.time()
 init()
@@ -108,8 +108,6 @@ def selector():
          c=True
      if args.click:
          cl=True
-     if args.sql:
-         s=True
      if args.idor:
          i=True
      if args.ssrf:
@@ -126,37 +124,36 @@ def selector():
      if args.output:
          fname= os.path.join(args.output)
          o=True
-     if args.xss:
+     if args.xss and not args.word:
          x=True
-     if args.lfi:       
+     if args.lfi and not args.word:       
          l=True
-     if args.sql:
+     if args.sql and not args.word:
          s=True                                           
      scan(U,c,cl,h,x,l,s,i,sr,output,fname,o,urls_vulnerables)
-     if args.xss and args.word:
+     if args.word:
+         uri=[]
+         parametizer(U,output) 
+         with open(output, "r") as f:
+             for i in f.readlines():
+                 i = i.strip()
+                 if i == "" or i.startswith("#"):
+                     continue
+                 uri.append(i)
          with open(args.word, "r") as f:
              for i in f.readlines():
                  i = i.strip()
                  if i == "" or i.startswith("#"):
                      continue
-                 wordlist.append(i)
-         xss(url,wordlist,urls_vulnerables)                 
-     if args.lfi and args.word: 
-         with open(args.word, "r") as f:
-             for i in f.readlines():
-                 i = i.strip()
-                 if i == "" or i.startswith("#"):
-                     continue
-                 wordlist.append(i)
-         lfi(url,wordlist,urls_vulnerables)
-     if args.sql and args.word:
-         with open(args.word, "r") as f:
-             for i in f.readlines():
-                 i = i.strip()
-                 if i == "" or i.startswith("#"):
-                     continue
-                 wordlist.append(i)
-         sqli(url,wordlist,urls_vulnerables)           
+                 wordlist.append(i)                                        
+         if args.xss:                       
+                xss(uri,wordlist,urls_vulnerables)                 
+         if args.lfi: 
+                lfi(uri,wordlist,urls_vulnerables)
+         if args.sql:        
+                sqli(uri,wordlist,urls_vulnerables)
+         if args.output:
+             save_output(urls_vulnerables,fname,U)                  
     elif args.usedlist:
      if args.hsts: 
          h=True
@@ -180,11 +177,11 @@ def selector():
      if args.output:
          fname= os.path.join(args.output)
          o=True
-     if args.xss:
+     if args.xss and not args.word:
          x=True
-     if args.sql:
+     if args.sql and not args.word:
          s=True         
-     if args.lfi:
+     if args.lfi and not args.word:
          l=True                                       
      with open(args.usedlist, "r") as f:
          for q in f.readlines():
@@ -192,35 +189,44 @@ def selector():
              if q == "" or q.startswith("#"):
                  continue
              url.append(q)
-     all_list(url,c,cl,h,x,l,s,i,sr,output,fname,o,urls_vulnerables)        
-     if args.xss and args.word:
+     if not args.word:        
+         all_list(url,c,cl,h,x,l,s,i,sr,output,fname,o,urls_vulnerables)        
+     if args.word:
          with open(args.word, "r") as f:
              for i in f.readlines():
                  i = i.strip()
                  if i == "" or i.startswith("#"):
                      continue
                  wordlist.append(i)
-         xss(url,wordlist,urls_vulnerables)
-     if args.lfi and args.word:
-         with open(args.word, "r") as f:
-             for i in f.readlines():
-                 i = i.strip()
-                 if i == "" or i.startswith("#"):
-                     continue
-                 wordlist.append(i)
-         lfi(url,wordlist,urls_vulnerables)                 
-     if args.sql and args.word:
-         with open(args.word, "r") as f:
-             for i in f.readlines():
-                 i = i.strip()
-                 if i == "" or i.startswith("#"):
-                     continue
-                 wordlist.append(i)
-         sqli(url,wordlist,urls_vulnerables)                       
+         for l in url:
+             uri=[]
+             print()
+             print('---------------------')
+             print('\033[1;32m' +l+':\033[0m')
+             print('---------------------')
+             print()        
+             parametizer(l,output) 
+             with open(output, "r") as f:
+                 for i in f.readlines():
+                     i = i.strip()
+                     if i == "" or i.startswith("#"):
+                         continue
+                     uri.append(i)
+             if args.xss:                        
+                 xss(uri,wordlist,urls_vulnerables)
+             if args.lfi:
+                 lfi(uri,wordlist,urls_vulnerables)                 
+             if args.sql:
+                 sqli(uri,wordlist,urls_vulnerables)
+             if args.output:
+                 save_output(urls_vulnerables,fname,l)
 if len(sys.argv) <= 1:
     print('\n%s -h for help.' % (sys.argv[0]))
     exit(0)
             
 selector()
+
+
+
 
 
