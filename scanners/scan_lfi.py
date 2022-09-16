@@ -91,7 +91,7 @@ def lfi(l,wi,urls_vulnerables):
                      except:
                          continue
                      line= line.replace('%20',' ')
-                     line= line.replace(f'={w}',limp)
+                     line= line.replace(f'{w}',limp)
          else:
              continue 
     if found >= 1:
