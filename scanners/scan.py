@@ -100,11 +100,11 @@ def scan(U,c,cl,h,x,l,s,i,sr,output,fname,o,vulnerables_urls):
         wordlist=['"><script>confirm(1)</script>']
         parametizer(U,output)
         with open(output, "r") as f:
-                for i in f.readlines():
-                    i = i.strip()
-                    if i == "" or i.startswith("#"):
+                for q in f.readlines():
+                    q = q.strip()
+                    if q == "" or q.startswith("#"):
                         continue
-                    uri.append(i)            
+                    uri.append(q)            
         print()        
         print('\033[1;33mTest xss for default payload:\033[0m')
         print()        
