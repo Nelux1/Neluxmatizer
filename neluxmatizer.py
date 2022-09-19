@@ -135,17 +135,17 @@ def selector():
          uri=[]
          parametizer(U,output) 
          with open(output, "r") as f:
-             for i in f.readlines():
-                 i = i.strip()
-                 if i == "" or i.startswith("#"):
+             for p in f.readlines():
+                 p = p.strip()
+                 if p == "" or p.startswith("#"):
                      continue
-                 uri.append(i)
+                 uri.append(p)
          with open(args.word, "r") as f:
-             for i in f.readlines():
-                 i = i.strip()
-                 if i == "" or i.startswith("#"):
+             for o in f.readlines():
+                 o = o.strip()
+                 if o == "" or o.startswith("#"):
                      continue
-                 wordlist.append(i)                                        
+                 wordlist.append(o)                                        
          if args.xss:                       
                 xss(uri,wordlist,urls_vulnerables)                 
          if args.lfi: 
@@ -225,8 +225,4 @@ if len(sys.argv) <= 1:
     exit(0)
             
 selector()
-
-
-
-
 
