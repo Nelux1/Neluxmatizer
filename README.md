@@ -13,7 +13,7 @@ Requirement: python 3.7 or higher
 INSTALLATION:
 
     git clone https://github.com/Nelux1/Neluxmatizer.git
-    pip3 -r install requirements
+    pip3 install -r requirements.txt o pip install -r requirements.txt
     ./neluxmatizer.py
 
 EXAMPLES:
