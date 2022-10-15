@@ -2,6 +2,10 @@ from cgitb import text
 import mechanize
 import requests
 from urllib import parse as urlparse
+from cgitb import text
+import mechanize
+import requests
+from urllib import parse as urlparse
 import http.cookiejar
 import os
 import sys
@@ -45,6 +49,9 @@ def xss(l,wordlist,urls_vulnerables):
              req= requests.get(linea,timeout=50)
              body= str(urlopen(linea).read()).lower()
              if li in body:
+                if ".json" in linea:
+                 continue
+                else:
                  found= found + 1
                  if found == 1:
                     urls_vulnerables.append('\n****************** VULNERABLE TO XSS: *********************\n')
