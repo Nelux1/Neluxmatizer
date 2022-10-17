@@ -23,7 +23,7 @@ print('''\033[1;34m
     @@@@    @@@@@ @@@@        @@@@      @@@@    @@@   @@   @@   
     @@@@     @@@@ @@@@@@@@@@  @@@@@@@@  @@@@@@@@@@@ @@@@   @@@@ 
 
-                                 by Marcos Suarez for pentesters
+                                 by Marcos Suarez for pentesters v1.2
 
 \033[0m''')
 
