@@ -64,7 +64,7 @@ def all_list(l,c,cl,h,x,lf,s,i,sr,output,fname,o,vulnerables_urls):
                     print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mNot force HSTS\033[0m')
                     vulnerables_urls.append('****************** VULNERABLE TO HSTS: *********************')
                     vulnerables_urls.append(linea)      
-         else:
+                else:
                     print ('\033[1;31m[-]\033[0m ' + linea + ' \033[1;31mHSTS is OK\033[0m')  
             
          if cl:
@@ -75,7 +75,7 @@ def all_list(l,c,cl,h,x,lf,s,i,sr,output,fname,o,vulnerables_urls):
                         vulnerables_urls.append(linea)
                     else:
                         print ('\033[1;31m[-]\033[0m '  + linea + ' \033[1;31mis not vulnerable to Clickjacking\033[0m')
-         else:
+                else:
                     print ('\033[1;31m[-]\033[0m '  + linea + ' \033[1;31mis not vulnerable to Clickjacking\033[0m')
             
          if c:
@@ -194,4 +194,6 @@ def all_list(l,c,cl,h,x,lf,s,i,sr,output,fname,o,vulnerables_urls):
      except:
          continue          
      if o:
-         save_output(vulnerables_urls,fname,linea)  
+         save_output(vulnerables_urls,fname,linea)    
+         
+
