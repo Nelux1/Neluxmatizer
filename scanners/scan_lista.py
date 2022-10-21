@@ -100,11 +100,11 @@ def all_list(l,c,cl,h,x,lf,s,i,sr,output,fname,o,vulnerables_urls):
              try:
                  parametizer(linea,output)
                  with open(output, "r") as f:
-                     for i in f.readlines():
-                         i = i.strip()
-                         if i == "" or i.startswith("#"):
+                     for v in f.readlines():
+                         v = v.strip()
+                         if v == "" or v.startswith("#"):
                              continue
-                         uri.append(i)            
+                         uri.append(v)            
                  print()        
                  print('\033[1;33mTest xss for default payload:\033[0m')
                  print()        
@@ -120,11 +120,11 @@ def all_list(l,c,cl,h,x,lf,s,i,sr,output,fname,o,vulnerables_urls):
              try:
                  parametizer(linea,output)
                  with open(output, "r") as f:
-                     for i in f.readlines():
-                         i = i.strip()
-                         if i == "" or i.startswith("#"):
+                     for q in f.readlines():
+                         q = q.strip()
+                         if q == "" or q.startswith("#"):
                              continue
-                         uri.append(i)            
+                         uri.append(q)            
                  print()        
                  print('\033[1;33mTest sqli for default payload:\033[0m')
                  print()        
@@ -140,11 +140,11 @@ def all_list(l,c,cl,h,x,lf,s,i,sr,output,fname,o,vulnerables_urls):
              try:
                  parametizer(linea,output)
                  with open(output, "r") as f:
-                     for i in f.readlines():
-                         i = i.strip()
-                         if i == "" or i.startswith("#"):
+                     for j in f.readlines():
+                         j = j.strip()
+                         if j == "" or j.startswith("#"):
                              continue
-                         uri.append(i)            
+                         uri.append(j)            
                  print()        
                  print('\033[1;33mSearch idor parameters:\033[0m')
                  print()        
@@ -160,11 +160,11 @@ def all_list(l,c,cl,h,x,lf,s,i,sr,output,fname,o,vulnerables_urls):
              try:
                  parametizer(linea,output)
                  with open(output, "r") as f:
-                     for i in f.readlines():
-                         i = i.strip()
-                         if i == "" or i.startswith("#"):
+                     for w in f.readlines():
+                         w = w.strip()
+                         if w == "" or w.startswith("#"):
                              continue
-                         uri.append(i)            
+                         uri.append(w)            
                  print()        
                  print('\033[1;33mSearch SSRF parameters:\033[0m')
                  print()        
@@ -180,11 +180,11 @@ def all_list(l,c,cl,h,x,lf,s,i,sr,output,fname,o,vulnerables_urls):
              try:
                  parametizer(linea,output)
                  with open(output, "r") as f:
-                     for i in f.readlines():
-                         i = i.strip()
-                         if i == "" or i.startswith("#"):
+                     for z in f.readlines():
+                         z = z.strip()
+                         if z == "" or z.startswith("#"):
                              continue
-                         uri.append(i)            
+                         uri.append(z)            
                  print()        
                  print('\033[1;33mTest lfi for default payload:\033[0m')
                  print()        
@@ -196,4 +196,6 @@ def all_list(l,c,cl,h,x,lf,s,i,sr,output,fname,o,vulnerables_urls):
      if o:
          save_output(vulnerables_urls,fname,linea)    
          
+
+
 
