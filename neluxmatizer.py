@@ -1,4 +1,5 @@
 import os
+from os import system
 from urllib import parse as urlparse
 import sys
 import argparse
@@ -9,6 +10,7 @@ from scanners.scan_sqli import sqli
 from scanners.scan_xss import xss
 from scanners.scan_lista import all_list
 from scanners.scan_lfi import lfi
+from scanners.scan_ssti import ssti
 from parametizer.core.save_it import save_output
 import time 
 start_time = time.time()
@@ -23,7 +25,7 @@ print('''\033[1;34m
     @@@@    @@@@@ @@@@        @@@@      @@@@    @@@   @@   @@   
     @@@@     @@@@ @@@@@@@@@@  @@@@@@@@  @@@@@@@@@@@ @@@@   @@@@ 
 
-                                 by Marcos Suarez for pentesters v1.2
+                                 by Marcos Suarez for pentesters v2.0
 
 \033[0m''')
 
@@ -76,7 +78,11 @@ parser.add_argument("--idor",
 parser.add_argument("--ssrf",
                     dest="ssrf",
                     help="Check SSRF parameters.",
-                    action= 'store_true' )                                         
+                    action= 'store_true' )
+parser.add_argument("--ssti",
+                    dest="ssti",
+                    help="Check SSTI vulnerability.",
+                    action= 'store_true' )                                                             
 parser.add_argument("-o",
                      dest="output", 
                      help = 'Output file name')
@@ -99,6 +105,7 @@ def selector():
     s=False
     i=False
     sr=False
+    sst=False
     o=False
     if args.url:
      U=args.url
@@ -111,7 +118,9 @@ def selector():
      if args.idor:
          i=True
      if args.ssrf:
-         sr=True             
+         sr=True
+     if args.ssti:
+         sst=True                       
      if args.all:
          c=True 
          cl=True 
@@ -121,6 +130,7 @@ def selector():
          s=True
          i=True
          sr=True
+         sst=True
      if args.output:
          fname= os.path.join(args.output)
          o=True
@@ -130,7 +140,7 @@ def selector():
          l=True
      if args.sql and not args.word:
          s=True                                           
-     scan(U,c,cl,h,x,l,s,i,sr,output,fname,o,urls_vulnerables)
+     scan(U,c,cl,h,x,l,s,i,sr,sst,output,fname,o,urls_vulnerables)
      if args.word:
          uri=[]
          parametizer(U,output) 
@@ -164,7 +174,9 @@ def selector():
      if args.idor:
          i=True
      if args.ssrf:
-         sr=True             
+         sr=True 
+     if args.ssti:
+         sst=True                      
      if args.all:
          c=True 
          cl=True 
@@ -174,6 +186,7 @@ def selector():
          s=True
          i=True
          sr=True
+         sst=True
      if args.output:
          fname= os.path.join(args.output)
          o=True
@@ -190,7 +203,7 @@ def selector():
                  continue
              url.append(q)
      if not args.word:        
-         all_list(url,c,cl,h,x,l,s,i,sr,output,fname,o,urls_vulnerables)        
+         all_list(url,c,cl,h,x,l,s,i,sr,sst,output,fname,o,urls_vulnerables)        
      if args.word:
          with open(args.word, "r") as f:
              for i in f.readlines():
@@ -205,13 +218,17 @@ def selector():
              print('\033[1;32m' +l+':\033[0m')
              print('---------------------')
              print()        
-             parametizer(l,output) 
-             with open(output, "r") as f:
-                 for i in f.readlines():
-                     i = i.strip()
-                     if i == "" or i.startswith("#"):
-                         continue
-                     uri.append(i)
+             parametizer(l,output)
+             try: 
+                 with open(output, "r") as f:
+                     for i in f.readlines():
+                         i = i.strip()
+                         if i == "" or i.startswith("#"):
+                             continue
+                         uri.append(i)
+                         save=True
+             except:
+                 save=False               
              if args.xss:                        
                  xss(uri,wordlist,urls_vulnerables)
              if args.lfi:
@@ -219,10 +236,12 @@ def selector():
              if args.sql:
                  sqli(uri,wordlist,urls_vulnerables)
              if args.output:
-                 save_output(urls_vulnerables,fname,l)
+                 if save:
+                     save_output(urls_vulnerables,fname,l)           
 if len(sys.argv) <= 1:
     print('\n%s -h for help.' % (sys.argv[0]))
     exit(0)
             
 selector()
+
 
