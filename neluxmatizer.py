@@ -25,7 +25,7 @@ print('''\033[1;34m
     @@@@    @@@@@ @@@@        @@@@      @@@@    @@@   @@   @@   
     @@@@     @@@@ @@@@@@@@@@  @@@@@@@@  @@@@@@@@@@@ @@@@   @@@@ 
 
-                                 by Marcos Suarez for pentesters v2.0
+                                 by Marcos Suarez for pentesters v3.0
 
 \033[0m''')
 
@@ -54,7 +54,7 @@ parser.add_argument("--click",
 parser.add_argument("-l",
                     dest="usedlist",
                     help="Check a list of URLs.",
-                    action='store')
+                    action= 'store' )
 parser.add_argument("-w",
                     dest="word",
                     help="wordlist of payloads",
@@ -77,12 +77,15 @@ parser.add_argument("--idor",
                     action= 'store_true' )                                         
 parser.add_argument("--ssrf",
                     dest="ssrf",
-                    help="Check SSRF parameters.",
+                    help="Check SSRF vulnerability.",
                     action= 'store_true' )
 parser.add_argument("--ssti",
                     dest="ssti",
                     help="Check SSTI vulnerability.",
-                    action= 'store_true' )                                                             
+                    action= 'store_true' )
+parser.add_argument("--only-params","-op",
+                     dest="params", 
+                     help = 'save params for fuzzing')
 parser.add_argument("-o",
                      dest="output", 
                      help = 'Output file name')
@@ -96,6 +99,7 @@ def selector():
     url = []
     wordlist=[]
     urls_vulnerables=[]
+    urls_params=[]
     fname= os.path.join('output','urls_vulnerables.txt')
     c=False
     cl=False
@@ -107,6 +111,7 @@ def selector():
     sr=False
     sst=False
     o=False
+    op=False
     if args.url:
      U=args.url
      if args.hsts: 
@@ -134,13 +139,16 @@ def selector():
      if args.output:
          fname= os.path.join(args.output)
          o=True
+     if args.params:
+         fname= os.path.join(args.params)
+         op=True     
      if args.xss and not args.word:
          x=True
      if args.lfi and not args.word:       
          l=True
      if args.sql and not args.word:
          s=True                                           
-     scan(U,c,cl,h,x,l,s,i,sr,sst,output,fname,o,urls_vulnerables)
+     scan(U,c,cl,h,x,l,s,i,sr,sst,output,fname,o,urls_vulnerables,op,urls_params)
      if args.word:
          uri=[]
          parametizer(U,output) 
@@ -190,6 +198,9 @@ def selector():
      if args.output:
          fname= os.path.join(args.output)
          o=True
+     if args.params:
+         fname= os.path.join(args.params)
+         op=True            
      if args.xss and not args.word:
          x=True
      if args.sql and not args.word:
@@ -203,7 +214,7 @@ def selector():
                  continue
              url.append(q)
      if not args.word:        
-         all_list(url,c,cl,h,x,l,s,i,sr,sst,output,fname,o,urls_vulnerables)        
+         all_list(url,c,cl,h,x,l,s,i,sr,sst,output,fname,o,urls_vulnerables,op,urls_params)        
      if args.word:
          with open(args.word, "r") as f:
              for i in f.readlines():
@@ -237,11 +248,13 @@ def selector():
                  sqli(uri,wordlist,urls_vulnerables)
              if args.output:
                  if save:
-                     save_output(urls_vulnerables,fname,l)           
+                     save_output(urls_vulnerables,fname,l)
+             #if args.params:
+             #    save_output(urls_params,fname,l)
+
 if len(sys.argv) <= 1:
     print('\n%s -h for help.' % (sys.argv[0]))
     exit(0)
             
 selector()
-
 
