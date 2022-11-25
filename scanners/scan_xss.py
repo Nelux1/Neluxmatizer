@@ -71,7 +71,7 @@ user_agents = [
 user_agent = random.choice (user_agents)
 headers = {'User-Agent': user_agent}
 
-def xss(l,wordlist,urls_vulnerables,params):
+def xss(l,wordlist,urls_vulnerables):
     print()
     print('---------------------')
     print('\033[1;36m Testing xss: \033[0m') 
@@ -90,8 +90,6 @@ def xss(l,wordlist,urls_vulnerables,params):
          try:
              req= requests.get(linea,timeout=50)
              body= str(urlopen(linea).read()).lower()
-             if li in linea:
-                 params.append(linea)
              if li in body:
                 if ".json" in linea:
                  continue
