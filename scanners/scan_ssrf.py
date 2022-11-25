@@ -130,3 +130,27 @@ def ssrf(l,wi,urls_vulnerables):
      print (f'\033[1;32m[+] Found [{found}] SSRF parameter/s"\033[0m')
     else:
      print("\033[1;31m[-] No results found\033[0m")
+
+def ssrf_params(l,params):
+    print()
+    print('---------------------')
+    print('\033[1;36m Testing SSRF parameters:\033[0m') 
+    print('---------------------')
+    print()
+    limp=''
+    found=0
+    for linea in l:   
+     for li in wordlist:
+         if li in linea:
+             found= found + 1
+             if found == 1:
+                 params.append('\n****************** PARAMETERS TO SSRF: *********************\n') 
+             print('\033[1;32m[+]\033[0m ' + linea)
+             params.append(linea)
+         else:
+             continue
+    if found >= 1:
+     print()
+     print (f'\033[1;32m[+] Found [{found}] SSRF parameter/s"\033[0m')
+    else:
+     print("\033[1;31m[-] No results found\033[0m")
