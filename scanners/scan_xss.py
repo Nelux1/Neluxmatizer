@@ -13,6 +13,48 @@ from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 import random
 
+wordl=[
+    "q=",
+    "s=",
+    "search=",
+    "lang=",
+    "keyword=",
+    "query=",
+    "page=",
+    "keywords=",
+    "year=",
+    "view=",
+    "email=",
+    "type=",
+    "name=",
+    "p=",
+    "callback=",
+    "jsonp=",
+    "api_key=",
+    "api=",
+    "password=",
+    "email=",
+    "emailto=",
+    "token=",
+    "username=",
+    "csrf_token=",
+    "unsubscribe_token=",
+    "id=",
+    "item=",
+    "page_id=",
+    "month=",
+    "immagine=",
+    "list_type=",
+    "url=",
+    "terms=",
+    "categoryid=",
+    "key=",
+    "l=",
+    "begindate=",
+    "enddate="
+]
+
+
 
 user_agents = [
  "Mozilla/5.0 (X11; U; Linux i686; it-IT; rv:1.9.0.2) Gecko/2008092313 Ubuntu/9.25 (jaunty) Firefox/3.8",
@@ -29,7 +71,7 @@ user_agents = [
 user_agent = random.choice (user_agents)
 headers = {'User-Agent': user_agent}
 
-def xss(l,wordlist,urls_vulnerables):
+def xss(l,wordlist,urls_vulnerables,params):
     print()
     print('---------------------')
     print('\033[1;36m Testing xss: \033[0m') 
@@ -48,13 +90,15 @@ def xss(l,wordlist,urls_vulnerables):
          try:
              req= requests.get(linea,timeout=50)
              body= str(urlopen(linea).read()).lower()
+             if li in linea:
+                 params.append(linea)
              if li in body:
                 if ".json" in linea:
                  continue
                 else:
                  found= found + 1
                  if found == 1:
-                    urls_vulnerables.append('\n****************** VULNERABLE TO XSS: *********************\n')
+                     urls_vulnerables.append('\n****************** VULNERABLE TO XSS: *********************\n')
                  print ('\033[1;32m[+]\033[0m ' + linea)
                  urls_vulnerables.append(linea)
          except:
@@ -66,3 +110,27 @@ def xss(l,wordlist,urls_vulnerables):
      print (f'\033[1;32m[+] Found [{found}] results vulnerable to XSS\033[0m')
     else:
      print("\033[1;31m[-] No results found\033[0m")            
+
+def xss_params(l,params):
+    print()
+    print('---------------------')
+    print('\033[1;36m Testing XSS parameters:\033[0m') 
+    print('---------------------')
+    print()
+    limp=''
+    found=0
+    for linea in l:   
+     for li in wordl:
+         if li in linea:
+             found= found + 1
+             if found == 1:
+                 params.append('\n****************** PARAMETERS TO XSS: *********************\n') 
+             print('\033[1;32m[+]\033[0m ' + linea)
+             params.append(linea)
+         else:
+             continue
+    if found >= 1:
+     print()
+     print (f'\033[1;32m[+] Found [{found}] XSS parameter/s"\033[0m')
+    else:
+     print("\033[1;31m[-] No results found\033[0m")
