@@ -40,7 +40,7 @@ user_agents = [
 user_agent = random.choice (user_agents)
 headers = {'User-Agent': user_agent}
 
-def idor(l,w,urls_vulnerables):
+def idor(l,w,urls_vulnerables,params):
     print()
     print('---------------------')
     print('\033[1;36m Testing IDOR parameters:\033[0m') 
@@ -53,9 +53,9 @@ def idor(l,w,urls_vulnerables):
          if li in linea:
              found= found + 1
              if found == 1:
-                 urls_vulnerables.append('\n****************** PARAMETERS TO IDOR: *********************\n') 
+                 params.append('\n****************** PARAMETERS TO IDOR: *********************\n') 
              print('\033[1;32m[+]\033[0m ' + linea)
-             urls_vulnerables.append(linea)
+             params.append(linea)
          else:
              continue
     if found >= 1:
