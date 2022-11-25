@@ -223,4 +223,4 @@ def scan(U,c,cl,h,x,l,s,i,sr,sst,output,fname,o,vulnerables_urls,op,params):
     if o:
      save_output(vulnerables_urls,fname,U)
     if op:
-     save_output(params,fname,U)   
+     save_output(params,fname,U)  
