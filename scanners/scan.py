@@ -218,9 +218,9 @@ def scan(U,c,cl,h,x,l,s,i,sr,sst,output,fname,o,vulnerables_urls,op,params):
          print()        
          print('\033[1;33mTest ssti for default payload:\033[0m')
          print()
-         ssti(l, wi, urls_vulnerables)
+         ssti(uri, wordlist, vulnerables_urls)
 
     if o:
      save_output(vulnerables_urls,fname,U)
     if op:
-     save_output(params,fname,U)  
+     save_output(params,fname,U)   
