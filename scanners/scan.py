@@ -117,7 +117,7 @@ def scan(U,c,cl,h,x,l,s,i,sr,sst,output,fname,o,vulnerables_urls,op,params):
          print()        
          xss(uri,wordlist,vulnerables_urls)            
         
-    if i:
+    if i and op:
         uri=[]
         wordlist=['']
         parametizer(U,output)
