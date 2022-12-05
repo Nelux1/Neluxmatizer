@@ -157,7 +157,7 @@ def all_list(l,c,cl,h,x,lf,s,i,sr,sst,output,fname,o,vulnerables_urls,op,params)
      except:
          continue    
      try:    
-         if i:
+         if i and op:
              uri=[]
              wordlist=['']   
              parametizer(linea,output)
