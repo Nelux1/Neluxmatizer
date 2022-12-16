@@ -6,9 +6,9 @@ import sys,os
 import random
 from urllib.request import urlopen
 from urllib.error import URLError, HTTPError
-from colorama import Back, Fore, init
+from colorama import Back, Fore, Cursor, init
+from time import sleep
 init()
-
 
 wordlist=[
  "user=",
@@ -63,3 +63,4 @@ def idor(l,w,urls_vulnerables,params):
      print (f'\033[1;32m[+] Found [{found}] IDORS parameter/s"\033[0m')
     else:
      print("\033[1;31m[-] No results found\033[0m")
+     print()
