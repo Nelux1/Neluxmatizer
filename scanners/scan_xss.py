@@ -12,6 +12,9 @@ import sys
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 import random
+from colorama import Back, Fore, Cursor, init
+from time import sleep
+init()
 
 wordl=[
     "q=",
@@ -81,6 +84,10 @@ def xss(l,wordlist,urls_vulnerables):
     found=0
     for linea in l:
         for li in wordlist:
+         if len(urls_vulnerables) == 0:
+             print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
+             sleep(1)
+             print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")      
          if 'FUZZ' in linea:
                 linea= linea.replace('=FUZZ',f'={li}')
                 linea= linea.replace(' ','%20')
@@ -107,7 +114,9 @@ def xss(l,wordlist,urls_vulnerables):
      print()   
      print (f'\033[1;32m[+] Found [{found}] results vulnerable to XSS\033[0m')
     else:
-     print("\033[1;31m[-] No results found\033[0m")            
+     print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')         
+     print("\033[1;31m[-] No results found\033[0m")
+     print()           
 
 def xss_params(l,params):
     print()
@@ -132,3 +141,4 @@ def xss_params(l,params):
      print (f'\033[1;32m[+] Found [{found}] XSS parameter/s"\033[0m')
     else:
      print("\033[1;31m[-] No results found\033[0m")
+     print()
