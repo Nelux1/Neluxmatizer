@@ -6,9 +6,9 @@ import sys,os
 import random
 from urllib.request import urlopen
 from urllib.error import URLError, HTTPError
-from colorama import Back, Fore, init
+from colorama import Back, Fore, Cursor, init
+from time import sleep
 init()
-
 
 wordlist=[
 "access", 
@@ -104,6 +104,10 @@ def ssrf(l,wi,urls_vulnerables):
          if li in linea:
             for line in l:
                 for w in wi:
+                     if len(urls_vulnerables) == 0:
+                         print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
+                         sleep(1)
+                         print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")
                      if 'FUZZ' in line:
                          line= line.replace('=FUZZ',f'={w}')
                          line= line.replace(' ','%20')
@@ -128,8 +132,11 @@ def ssrf(l,wi,urls_vulnerables):
     if found >= 1:
      print()   
      print (f'\033[1;32m[+] Found [{found}] SSRF parameter/s"\033[0m')
+     print()
     else:
+     print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')         
      print("\033[1;31m[-] No results found\033[0m")
+     print()
 
 def ssrf_params(l,params):
     print()
