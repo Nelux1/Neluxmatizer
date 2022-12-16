@@ -25,7 +25,7 @@ print('''\033[1;34m
     @@@@    @@@@@ @@@@        @@@@      @@@@    @@@   @@   @@   
     @@@@     @@@@ @@@@@@@@@@  @@@@@@@@  @@@@@@@@@@@ @@@@   @@@@ 
 
-                                 by Marcos Suarez for pentesters v3.0
+                                 by Marcos Suarez for pentesters v3.1.1
 
 \033[0m''')
 
@@ -74,7 +74,15 @@ parser.add_argument("--sql",
 parser.add_argument("--idor",
                     dest="idor",
                     help="Check IDOR parameters.",
-                    action= 'store_true' )                                         
+                    action= 'store_true' )
+parser.add_argument("--rce",
+                    dest="rce",
+                    help="Check RCE vulnerability.",
+                    action= 'store_true' )
+parser.add_argument("--redirect",
+                    dest="redirect",
+                    help="Check OPENREDIRECT vulnerability.",
+                    action= 'store_true' )                                                                                
 parser.add_argument("--ssrf",
                     dest="ssrf",
                     help="Check SSRF vulnerability.",
@@ -82,7 +90,7 @@ parser.add_argument("--ssrf",
 parser.add_argument("--ssti",
                     dest="ssti",
                     help="Check SSTI vulnerability.",
-                    action= 'store_true' )
+                    action= 'store_true' )                  
 parser.add_argument("--only-params","-op",
                      dest="params", 
                      help = 'save params for fuzzing')
@@ -108,6 +116,8 @@ def selector():
     l=False
     s=False
     i=False
+    r=False
+    rc=False
     sr=False
     sst=False
     o=False
@@ -122,10 +132,14 @@ def selector():
          cl=True
      if args.idor:
          i=True
+     if args.rce:
+         rc=True 
+     if args.redirect:
+         r=True         
      if args.ssrf:
          sr=True
      if args.ssti:
-         sst=True                       
+         sst=True                          
      if args.all:
          c=True 
          cl=True 
@@ -134,8 +148,11 @@ def selector():
          l=True
          s=True
          i=True
+         k=True
          sr=True
          sst=True
+         rc=True
+         r=True
      if args.output:
          fname= os.path.join(args.output)
          o=True
@@ -148,7 +165,7 @@ def selector():
          l=True
      if args.sql and not args.word:
          s=True                                           
-     scan(U,c,cl,h,x,l,s,i,sr,sst,output,fname,o,urls_vulnerables,op,urls_params)
+     scan(U,c,cl,h,x,l,s,i,r,rc,sr,sst,output,fname,o,urls_vulnerables,op,urls_params)
      if args.word:
          uri=[]
          parametizer(U,output) 
@@ -181,10 +198,14 @@ def selector():
          cl=True
      if args.idor:
          i=True
+     if args.rce:
+         rc=True
+     if args.redirect:
+         r=True        
      if args.ssrf:
          sr=True 
      if args.ssti:
-         sst=True                      
+         sst=True                        
      if args.all:
          c=True 
          cl=True 
@@ -193,8 +214,11 @@ def selector():
          l=True
          s=True
          i=True
+         k=True
          sr=True
          sst=True
+         r=True
+         rc=True
      if args.output:
          fname= os.path.join(args.output)
          o=True
@@ -214,7 +238,7 @@ def selector():
                  continue
              url.append(q)
      if not args.word:        
-         all_list(url,c,cl,h,x,l,s,i,sr,sst,output,fname,o,urls_vulnerables,op,urls_params)        
+         all_list(url,c,cl,h,x,l,s,i,r,rc,sr,sst,output,fname,o,urls_vulnerables,op,urls_params)        
      if args.word:
          with open(args.word, "r") as f:
              for i in f.readlines():
