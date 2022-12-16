@@ -6,6 +6,9 @@ import sys,os
 import random
 from urllib.request import urlopen
 from urllib.error import URLError, HTTPError
+from colorama import Back, Fore, Cursor, init
+from time import sleep
+init()
 
 wordlist=[
         "id=",
@@ -66,7 +69,11 @@ def sqli(l,wi,urls_vulnerables):
      for li in wordlist:
          if li in linea:
              #for linea in l:
-                 for w in wi:      
+                 for w in wi:
+                        if len(urls_vulnerables) == 0:
+                         print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
+                         sleep(1)
+                         print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")      
                         if 'FUZZ' in linea:
                             linea= linea.replace('=FUZZ',f'={w}')
                         elif '=' and not 'FUZZ' in linea:
@@ -77,19 +84,23 @@ def sqli(l,wi,urls_vulnerables):
                             if "sql syntax near" or "syntax error has occurred" or "incorrect syntax near" or "unexpected end of SQL command" or "Warning: mysql_connect()" or "Warning: mysql_query()" or "Warning: pg_connect()" in body:
                              found= found + 1
                              if found == 1:
-                                    urls_vulnerables.append('\n****************** PARAMETERS TO SQL: *********************\n')
+                                 urls_vulnerables.append('\n****************** PARAMETERS TO SQL: *********************\n')
+                                 print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
                              print('\033[1;32m[+]\033[0m ' + linea)
                              urls_vulnerables.append(linea)
                         except:
                             continue
-                        linea= linea.replace(f'{w}','=FUZZ')
+                        linea= linea.replace(f'{w}','=FUZZ')          
          else:
              continue
     if found >= 1:
          print()
-         print (f'\033[1;32m[+] Found [{found}] SQL parameter/s"\033[0m')      
+         print (f'\033[1;32m[+] Found [{found}] SQL parameter/s"\033[0m')
+         print()      
     else:
-         print("\033[1;31m[-] No results found\033[0m")        
+         print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
+         print("\033[1;31m[-] No results found\033[0m")
+         print()        
 
 def sqli_params(l,params):
     print()
