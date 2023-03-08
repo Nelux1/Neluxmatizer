@@ -59,7 +59,7 @@ def idor(l,w,urls_vulnerables,params):
          else:
              continue
     if found >= 1:
-     print()
+     print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
      print (f'\033[1;32m[+] Found [{found}] IDORS parameter/s"\033[0m')
     else:
      print("\033[1;31m[-] No results found\033[0m")
