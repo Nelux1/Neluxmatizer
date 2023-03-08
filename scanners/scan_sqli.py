@@ -42,6 +42,17 @@ wordlist=[
         "filter="
         ]
 
+responses=[
+    "sql syntax near",
+    "syntax error has occurred",
+    "incorrect syntax near",
+    "unexpected end of SQL command",
+    "Warning: mysql_connect()",
+    "Warning: mysql_query()",
+    "Warning: pg_connect()",
+    "Warning: mysql_fetch_array()"
+]
+
 
 user_agents = [
                             "Mozilla/5.0 (X11; U; Linux i686; it-IT; rv:1.9.0.2) Gecko/2008092313 Ubuntu/9.25 (jaunty) Firefox/3.8",
@@ -81,16 +92,16 @@ def sqli(l,wi,urls_vulnerables):
                         try:
                             req= requests.get(linea,headers=headers,timeout=50)
                             body= str(urlopen(linea).read()).lower()
-                            if "sql syntax near" or "syntax error has occurred" or "incorrect syntax near" or "unexpected end of SQL command" or "Warning: mysql_connect()" or "Warning: mysql_query()" or "Warning: pg_connect()" in body:
-                             found= found + 1
-                             if found == 1:
-                                 urls_vulnerables.append('\n****************** PARAMETERS TO SQL: *********************\n')
-                                 print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
-                             print('\033[1;32m[+]\033[0m ' + linea)
-                             urls_vulnerables.append(linea)
+                            for x in responses:
+                             if x in req.text:  
+                                 found= found + 1
+                                 if found == 1:
+                                     urls_vulnerables.append('\n****************** PARAMETERS TO SQL: *********************\n')
+                                 print('\033[1;32m[+]\033[0m ' + linea)
+                                 urls_vulnerables.append(linea)
                         except:
                             continue
-                        linea= linea.replace(f'{w}','=FUZZ')          
+                        linea= linea.replace(f'={w}','=FUZZ')
          else:
              continue
     if found >= 1:
