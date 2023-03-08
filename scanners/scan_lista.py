@@ -138,7 +138,7 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
      try:    
          if s:
              uri=[]
-             wordlist=["'","%27","%28","%29","%26","%21","'-'","'^'","'*'","'&'"]
+             wordlist=["%27"]
              parametizer(linea,output)   
              try:
                  with open(output, "r") as f:
