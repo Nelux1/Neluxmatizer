@@ -97,6 +97,7 @@ def sqli(l,wi,urls_vulnerables):
                                  found= found + 1
                                  if found == 1:
                                      urls_vulnerables.append('\n****************** PARAMETERS TO SQL: *********************\n')
+                                     print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
                                  print('\033[1;32m[+]\033[0m ' + linea)
                                  urls_vulnerables.append(linea)
                         except:
