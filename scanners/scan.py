@@ -185,7 +185,7 @@ def scan(U,c,cl,h,x,l,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,params)
 
     if s:
         uri=[]
-        wordlist=["'","%27","%28","%29","%26","%21","'-'","'^'","'*'","'&'"]
+        wordlist=["%27"]
         parametizer(U,output) 
         try:
          with open(output, "r") as f:
