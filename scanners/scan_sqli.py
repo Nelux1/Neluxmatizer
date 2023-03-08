@@ -127,7 +127,8 @@ def sqli_params(l,params):
          if li in linea:
              found= found + 1
              if found == 1:
-                 params.append('\n****************** PARAMETERS TO SQLI: *********************\n') 
+                 params.append('\n****************** PARAMETERS TO SQLI: *********************\n')
+                 print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
              print('\033[1;32m[+]\033[0m ' + linea)
              params.append(linea)
          else:
