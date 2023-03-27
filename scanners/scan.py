@@ -1,6 +1,5 @@
 from fileinput import filename
 from socket import timeout
-from turtle import back
 import mechanize
 from urllib import parse as urlparse
 import http.cookiejar
