@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+#
+
 import os
 from os import system
 from urllib import parse as urlparse
