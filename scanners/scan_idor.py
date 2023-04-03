@@ -54,13 +54,11 @@ def idor(l,w,urls_vulnerables,params):
              found= found + 1
              if found == 1:
                  params.append('\n****************** PARAMETERS TO IDOR: *********************\n') 
-                 print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
              print('\033[1;32m[+]\033[0m ' + linea)
              params.append(linea)
          else:
              continue
     if found >= 1:
-     print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
      print (f'\033[1;32m[+] Found [{found}] IDORS parameter/s"\033[0m')
     else:
      print("\033[1;31m[-] No results found\033[0m")
