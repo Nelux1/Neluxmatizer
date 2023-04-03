@@ -167,7 +167,11 @@ def selector():
      if args.lfi and not args.word:       
          l=True
      if args.sql and not args.word:
-         s=True                                           
+         s=True
+     if args.params:
+         h=False
+         c=False
+         cl=False
      scan(U,c,cl,h,x,l,s,i,r,rc,sr,sst,output,fname,o,urls_vulnerables,op,urls_params)
      if args.word:
          uri=[]
@@ -222,6 +226,10 @@ def selector():
          sst=True
          r=True
          rc=True
+     if args.params:
+         h=False
+         c=False
+         cl=False   
      if args.output:
          fname= os.path.join(args.output)
          o=True
