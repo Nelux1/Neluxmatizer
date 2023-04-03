@@ -27,7 +27,11 @@ EXAMPLES:
 Scan all vulnerabilities in url with output:
 
     ./neluxmatizer.py -u url_to_scan.com -a -o my_name_output.txt
- 
+
+Scan all vulnerabilities in url with only params output:
+    
+    ./neluxmatizer.py -u url_to_scan.com -a -op my_name_output.txt
+    
 Scan all vulnerabilities list of url with output:
    
     ./neluxmatizer.py -l list_url_to_scan.txt -a -o my_name_output.txt
