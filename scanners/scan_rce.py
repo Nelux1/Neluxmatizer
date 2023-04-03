@@ -121,13 +121,12 @@ def rce_params(l,params):
              found= found + 1
              if found == 1:
                  params.append('\n****************** PARAMETERS TO RCE: *********************\n')
-                 print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
              print('\033[1;32m[+]\033[0m ' + linea)
              params.append(linea)
          else:
              continue
     if found >= 1:
      print()
-     print (f'\033[1;32m[+] Found [{found}] RFI parameter/s"\033[0m')
+     print (f'\033[1;32m[+] Found [{found}] RCE parameter/s"\033[0m')
     else:
      print("\033[1;31m[-] No results found\033[0m")
