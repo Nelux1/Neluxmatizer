@@ -122,6 +122,7 @@ def lfi_params(l,params):
              found= found + 1
              if found == 1:
                  params.append('\n****************** PARAMETERS TO LFI: *********************\n')
+             print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')   
              print('\033[1;32m[+]\033[0m ' + linea)
              params.append(linea)
          else:
