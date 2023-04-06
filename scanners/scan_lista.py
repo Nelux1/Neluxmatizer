@@ -10,6 +10,7 @@ import sys
 from urllib.request import urlopen
 from urllib.error import URLError, HTTPError
 import random
+import requests
 from scanners.scan_idor import idor
 from scanners.scan_rce import rce, rce_params
 from scanners.scan_redirect import redirect, redirect_params
@@ -52,13 +53,11 @@ br.addheaders = [('User-Agent', user_agent),
 def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,params):   
      
  for linea in l:
-
      try:
          print()
          print('---------------------')
          print('\033[1;32m' + linea+ ':\033[0m')
          print('---------------------')
-         print()
          if 'http://' in linea:
              pass
          elif 'https://' in linea:
@@ -71,14 +70,24 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
          except URLError as e:
              for line in linea:
                  linea = linea.replace('http://', 'https://')
-             try:    
-                 br.open(linea)
-             except:
-                 print('[?] open Url Error')     
+             try:
+                 try:
+                     br.open(linea)
+                 except:        
+                     r=requests.get(linea,timeout=10.0)
+             except:    
+                 print(' \033[1;31m[?] Url Error\033[0m')     
          #forms = br.forms() #Finds all the forms present in webpage
+         try:
+             headers = str(urlopen(linea).headers).lower()
+
+         except:
+             r= requests.get(linea,headers)
+             headers=str(r.headers).lower()
          
-         headers = str(urlopen(linea).headers).lower()
-         
+         if h or cl or c:
+             print()
+             print('\033[1;33mChecking headers:\n\033[0m')
          if h:
                 if 'strict-transport-security' not in headers:
                     print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mNot force HSTS\033[0m')
@@ -112,7 +121,13 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
                     else:
                      print ('\033[1;31m[-]\033[0m ' + linea + ' \033[1;31mis not vulnerable to Cors\033[0m')
      except:
-         continue   
+         pass
+     
+     if x or l or s or i or r or rc or sr or sst:
+         print()
+         print('\033[1;33mSearch parameters:\n\033[0m')
+         print()
+
      try:    
          if x:
              uri=[]
@@ -132,9 +147,10 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
                      print('\033[1;33mTest xss for default payload:\033[0m')       
                      xss(uri,wordlist,vulnerables_urls)           
              except: 
-                  continue
+                  pass
      except:
-         continue        
+         pass 
+            
      try:    
          if s:
              uri=[]
@@ -155,9 +171,10 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
                      print()        
                      sqli(uri,wordlist,vulnerables_urls)           
              except: 
-                  continue
+                  pass
      except:
-         continue    
+         pass
+         
      try:    
          if i and op:
              uri=[]
@@ -175,9 +192,9 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
                      print()        
                      idor(uri,wordlist,vulnerables_urls)           
              except: 
-                  continue
+                  pass
      except:
-        continue
+         pass
  
      try:    
          if rc:
@@ -200,15 +217,15 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
                      print('\033[1;33mTest rce for default payload:\033[0m')       
                      rce(uri,wordlist,vulnerables_urls)           
              except: 
-                  continue
+                  pass
      except:
-         continue
+         pass
+     
      try:    
          if r:
              uri=[]
-             wordlist=['////example.com/','////example.com/','https:///example.com/','/<>//example.com',
-        '/?url=//example.com&next=//example.com&redirect=//example.com&redir=//example.com&rurl=//example.com&redirect_uri=//example.com'
-        ,'/\/\/example.com/','/https:example.com']
+             wordlist=['////example.com/','https:///example.com/','/<>//example.com',
+             'https://www.whitelisteddomain.tld@google.com','//google%00.com','https:google.com','//javascript:alert(1);','/\/\/example.com/','/https:example.com','https://google.com']
              parametizer(linea,output)
              try:
                  with open(output, "r") as f:
@@ -219,14 +236,15 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
                          uri.append(m)
                  if op:
                      redirect_params(uri,params)
-                 else:                                             
+                 else:
                      print()        
                      print('\033[1;33mTest redirect for default payload:\033[0m')       
                      redirect(uri,wordlist,vulnerables_urls)           
              except: 
-                  continue
+                  pass
      except:
-         continue                  
+         pass  
+                     
      try:    
          if sr:
              uri=[]
@@ -247,13 +265,15 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
                      print()        
                      ssrf(uri,wordlist,vulnerables_urls)           
              except: 
-                  continue
+                  pass
      except:
-         continue        
+         pass
+             
      try:    
          if lf:
              uri=[]
-             wordlist=['../../../../../../../../../../../../../../../../../../../../../../etc/passwd']   
+             wordlist=['../../../../../../../../../../../../../../../../../../../../../../etc/passwd','/../../../../../../../../../../../etc/passwd%00.jpg','/../../../../../../../../../../../etc/passwd%00.html' ,
+                       ]   
              parametizer(linea,output)
              try:
                  with open(output, "r") as f:
@@ -270,9 +290,10 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
                      print()        
                      lfi(uri,wordlist,vulnerables_urls)           
              except: 
-                  continue
+                  pass
      except:
-         continue
+         pass
+     
      try:    
          if sst:
              uri=[]
@@ -293,14 +314,16 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
                      print()        
                      ssti(uri,wordlist,vulnerables_urls)           
              except: 
-                  continue
+                 pass
      except:
-         continue           
-      
+         pass           
+ 
      if o:
          save_output(vulnerables_urls,fname,linea)    
      if op:
          save_output(params,fname,linea)              
+
+
 
 
 
