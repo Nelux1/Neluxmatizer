@@ -55,9 +55,12 @@ def scan(U,c,cl,h,x,l,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,params)
         br.open(U)
             
     #forms = br.forms() #Finds all the forms present in webpage
+    try:
+     headers = str(urlopen(U).headers).lower()
+    except:
+     r= requests.get(linea,headers)
+     headers=str(r.headers).lower()
 
-    headers = str(urlopen(U).headers).lower()
-  
     # test hsts    
     if h:
         if 'strict-transport-security' not in headers:
@@ -96,7 +99,11 @@ def scan(U,c,cl,h,x,l,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,params)
                 print ('\033[1;31m[-]\033[0m ' + U + ' \033[1;31mis not vulnerable to Cors\033[0m')
         else:
             print ('\033[1;31m[-]\033[0m ' + U + ' \033[1;31mis not vulnerable to Cors\033[0m')
-    
+
+    if x or l or s or i or r or rc or sr or sst:
+     print()
+     print('\033[1;33mSearch parameters:\n\033[0m')  
+     print()
     if x:
         uri=[]
         wordlist=['"><script>confirm(1)</script>']
@@ -161,9 +168,9 @@ def scan(U,c,cl,h,x,l,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,params)
 
     if r:
         uri=[]
-        wordlist=['////example.com/','////example.com/','https:///example.com/','/<>//example.com',
-        '/?url=//example.com&next=//example.com&redirect=//example.com&redir=//example.com&rurl=//example.com&redirect_uri=//example.com'
-        ,'/\/\/example.com/','/https:example.com']
+        wordlist=['////example.com/','https:///example.com/','/<>//example.com',
+        'https://www.whitelisteddomain.tld@google.com','//google%00.com','https:google.com','//javascript:alert(1);'
+        ,'/\/\/example.com/','/https:example.com','https://google.com']
         parametizer(U,output)
         try:
          with open(output, "r") as f:
@@ -271,3 +278,4 @@ def scan(U,c,cl,h,x,l,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,params)
      save_output(vulnerables_urls,fname,U)
     if op:
      save_output(params,fname,U)   
+
