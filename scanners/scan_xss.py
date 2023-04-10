@@ -83,7 +83,7 @@ def xss(l,wordlist,urls_vulnerables,threads):
     def xss_single(linea,li):
         nonlocal found
 
-        if len(urls_vulnerables) == 0:
+        if found == 0:
          print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
          sleep(2)
          print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")      
