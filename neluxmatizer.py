@@ -153,7 +153,7 @@ def selector():
     if args.ssti:
          sst=True                        
     if args.all:
-         c,cl,h,x,l,s,sr,sst,r,rc=True;True,True,True,True,True,True,True,True,True,True 
+         c,cl,h,x,l,s,i,r,rc,sr,sst,=True,True,True,True,True,True,True,True,True,True,True 
     if args.params:
          c,cl,h=False,False,False
     if args.output:
