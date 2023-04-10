@@ -1,26 +1,25 @@
 #!/usr/bin/env python3
 #
-
+import signal
 import os
 from os import system
 from urllib import parse as urlparse
-from pynput import keyboard
 import sys
 import argparse
 from colorama import Back, Fore, init
 from parametizer.params import parametizer
-from scanners.scan import scan
 from scanners.scan_sqli import sqli
 from scanners.scan_xss import xss
 from scanners.scan_lista import all_list
 from scanners.scan_lfi import lfi
 from scanners.scan_ssti import ssti
 from parametizer.core.save_it import save_output
+from colorama import Back, Fore, Cursor, init
 import time 
 start_time = time.time()
 init()
 
-print('''\033[1;34m
+print("\033[1;36m"+'''
 
     @@@@     @@@@ 
     @@@@@    @@@@ @@@@@@@@@@  @@@@      @@@@    @@@ @@@@   @@@@
@@ -29,10 +28,12 @@ print('''\033[1;34m
     @@@@    @@@@@ @@@@        @@@@      @@@@    @@@   @@   @@   
     @@@@     @@@@ @@@@@@@@@@  @@@@@@@@  @@@@@@@@@@@ @@@@   @@@@ 
 
-                                 by Marcos Suarez for pentesters v3.1.1
+                                 by Marcos Suarez for pentesters v4.0.0
 
-\033[0m''')
+'''+ '\033[0;m')
 
+print("\x1b[1;35m"+'EXIT PROGRAM WITH CRTL+C'+ '\033[0;m')
+print()
 parser = argparse.ArgumentParser(prog="neluxmatizer.py")
 
 parser.add_argument("-u","--url",
@@ -62,6 +63,10 @@ parser.add_argument("-l",
 parser.add_argument("-w",
                     dest="word",
                     help="wordlist of payloads",
+                    action= 'store' )
+parser.add_argument("-t",
+                    dest="threads",
+                    help="threads",
                     action= 'store' )
 parser.add_argument("--xss",
                     dest="xss",
@@ -105,208 +110,111 @@ parser.add_argument("-o",
 args = parser.parse_args()                                                         
 
 
-def selector(): 
+def signal_handler(signal, frame):
+     print()
+     print(Cursor.BACK(50) + Cursor.UP(0) + '                                                     ')
+     print("\x1b[1;35m"+'NOT CLOSE?'+ '\033[0;m'+ '  ----->  '+ "\x1b[1;31m"+ ' PRESS CTRL+C AGAIN'+ '\033[0;m')
+     sys.exit(0)
+    
+    
+def selector():
+    signal.signal(signal.SIGINT,signal_handler)
     output= os.path.join('output','domain.txt')
     url = []
     wordlist=[]
     urls_vulnerables=[]
     urls_params=[]
+    threads=30
     fname= os.path.join('output','urls_vulnerables.txt')
-    c=False
-    cl=False
-    h=False
-    x=False
-    l=False
-    s=False
-    i=False
-    r=False
-    rc=False
-    sr=False
-    sst=False
-    o=False
-    op=False   
+    c,cl,h,x,l,s,i,r,rc,sr,sst,o,op=False,False,False,False,False,False,False,False,False,False,False,False,False 
     if args.url:
-            U=args.url
-            if args.hsts: 
-                h=True
-            if args.cors:
-                c=True
-            if args.click:
-                cl=True
-            if args.idor:
-                i=True
-            if args.rce:
-                rc=True 
-            if args.redirect:
-                r=True         
-            if args.ssrf:
-                sr=True
-            if args.ssti:
-                sst=True                          
-            if args.all:
-                c=True 
-                cl=True 
-                h=True
-                x=True
-                l=True
-                s=True
-                i=True
-                k=True
-                sr=True
-                sst=True
-                rc=True
-                r=True
-            if args.output:
-                fname= os.path.join(args.output)
-                o=True
-            if args.params:
-                fname= os.path.join(args.params)
-                op=True     
-            if args.xss and not args.word:
-                x=True
-            if args.lfi and not args.word:       
-                l=True
-            if args.sql and not args.word:
-                s=True
-            if args.params:
-                h=False
-                cl=False
-                c=False
-            scan(U,c,cl,h,x,l,s,i,r,rc,sr,sst,output,fname,o,urls_vulnerables,op,urls_params)
-            if args.word:
-                uri=[]
-                parametizer(U,output) 
-                with open(output, "r") as f:
-                    for p in f.readlines():
-                        p = p.strip()
-                        if p == "" or p.startswith("#"):
-                            continue
-                        uri.append(p)
-                with open(args.word, "r") as f:
-                    for o in f.readlines():
-                        o = o.strip()
-                        if o == "" or o.startswith("#"):
-                            continue
-                        wordlist.append(o)                                        
-                if args.xss:                       
-                        xss(uri,wordlist,urls_vulnerables)                 
-                if args.lfi: 
-                        lfi(uri,wordlist,urls_vulnerables)
-                if args.sql:        
-                        sqli(uri,wordlist,urls_vulnerables)
-                if args.output:
-                    save_output(urls_vulnerables,fname,U)                  
+         url.append(str(args.url))                
     elif args.usedlist:
-            if args.hsts: 
-                h=True
-            if args.cors:
-                c=True
-            if args.click:
-                cl=True
-            if args.idor:
-                i=True
-            if args.rce:
-                rc=True
-            if args.redirect:
-                r=True        
-            if args.ssrf:
-                sr=True 
-            if args.ssti:
-                sst=True                        
-            if args.all:
-                c=True 
-                cl=True 
-                h=True
-                x=True
-                l=True
-                s=True
-                i=True
-                k=True
-                sr=True
-                sst=True
-                r=True
-                rc=True
-            if args.params:
-                c=False
-                cl=False
-                h=False
-            if args.output:
-                fname= os.path.join(args.output)
-                o=True
-            if args.params:
-                fname= os.path.join(args.params)
-                op=True            
-            if args.xss and not args.word:
-                x=True
-            if args.sql and not args.word:
-                s=True         
-            if args.lfi and not args.word:
-                l=True                                       
-            with open(args.usedlist, "r") as f:
-                for q in f.readlines():
-                    q = q.strip()
-                    if q == "" or q.startswith("#"):
-                        continue
-                    url.append(q)
-            if not args.word:        
-                all_list(url,c,cl,h,x,l,s,i,r,rc,sr,sst,output,fname,o,urls_vulnerables,op,urls_params)        
-            if args.word:
-                with open(args.word, "r") as f:
-                    for i in f.readlines():
-                        i = i.strip()
-                        if i == "" or i.startswith("#"):
-                            continue
-                        wordlist.append(i)
-                for l in url:
-                    uri=[]
-                    print()
-                    print('---------------------')
-                    print('\033[1;32m' +l+':\033[0m')
-                    print('---------------------')
-                    print()        
-                    parametizer(l,output)
-                    try: 
-                        with open(output, "r") as f:
-                            for i in f.readlines():
-                                i = i.strip()
-                                if i == "" or i.startswith("#"):
-                                    continue
-                                uri.append(i)
-                                save=True
-                    except:
-                        save=False               
-                    if args.xss:                        
-                        xss(uri,wordlist,urls_vulnerables)
-                    if args.lfi:
-                        lfi(uri,wordlist,urls_vulnerables)                 
-                    if args.sql:
-                        sqli(uri,wordlist,urls_vulnerables)
-                    if args.output:
-                        if save:
-                            save_output(urls_vulnerables,fname,l)
-                    #if args.params:
-                    #    save_output(urls_params,fname,l)
+         with open(args.usedlist, "r") as f:
+             for q in f.readlines():
+                 q = q.strip()
+                 if q == "" or q.startswith("#"):
+                     continue
+                 url.append(q)                  
+    if args.hsts: 
+         h=True
+    if args.cors:
+         c=True
+    if args.click:
+         cl=True
+    if args.idor:
+         i=True
+    if args.rce:
+         rc=True
+    if args.redirect:
+         r=True        
+    if args.ssrf:
+         sr=True 
+    if args.ssti:
+         sst=True                        
+    if args.all:
+         c,cl,h,x,l,s,sr,sst,r,rc=True;True,True,True,True,True,True,True,True,True,True 
+    if args.params:
+         c,cl,h=False,False,False
+    if args.output:
+         fname= os.path.join(args.output)
+         o=True
+    if args.params:
+         fname= os.path.join(args.params)
+         op=True            
+    if args.xss and not args.word:
+         x=True
+    if args.sql and not args.word:
+         s=True         
+    if args.lfi and not args.word:
+         l=True                                       
+    if not args.word:        
+     all_list(url,c,cl,h,x,l,s,i,r,rc,sr,sst,output,fname,o,urls_vulnerables,op,urls_params,threads)        
+    if args.word:
+         with open(args.word, "r") as f:
+             for i in f.readlines():
+                 i = i.strip()
+                 if i == "" or i.startswith("#"):
+                     continue
+                 wordlist.append(i)
+             for l in url:
+                 uri=[]
+                 print()
+                 print('---------------------')
+                 print('\033[1;32m' +l+':\033[0m')
+                 print('---------------------')
+                 print()        
+                 parametizer(l,output,threads)
+                 try: 
+                     with open(output, "r") as f:
+                         for i in f.readlines():
+                             i = i.strip()
+                             if i == "" or i.startswith("#"):
+                                 continue
+                             uri.append(i)
+                             save=True
+                 except:
+                     save=False               
+                 if args.xss:                        
+                     xss(uri,wordlist,urls_vulnerables,threads)
+                 if args.lfi:
+                     lfi(uri,wordlist,urls_vulnerables,threads)                 
+                 if args.sql:
+                     sqli(uri,wordlist,urls_vulnerables,threads)
+                 if args.output:
+                     if save:
+                         save_output(urls_vulnerables,fname,l)
+
      
 if len(sys.argv) <= 1:
     print('\n%s -h for help.' % (sys.argv[0]))
     exit(0)
 
 
-selector()
 
-'''def on_press(key):
- try:   
-     if key == keyboard.Key.esc:
-         e=False
-         print('Saliendo..')
-         exit(0)
- except AttributeError:
-     pass
+if __name__ == "__main__":
+    try:
+        selector()
+    except KeyboardInterrupt:
+        pass
 
-with keyboard.Listener(on_press=on_press) as listener:
-     if e:
-         selector()
-     else:
-         exit(0)    
-     listener.join()'''
-     
