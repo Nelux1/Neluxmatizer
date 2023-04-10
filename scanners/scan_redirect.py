@@ -122,7 +122,7 @@ def redirect(l,wi,urls_vulnerables,threads):
          body= str(urlopen(line).read()).lower()
          if len(req.history) >= 2:
               # Advertencia de posible vulnerabilidad de redirección abierta
-              print(f"[ALERTA] Se ha detectado una posible vulnerabilidad de redirección abierta en {url}")
+              print(f"[ALERTA] Se ha detectado una posible vulnerabilidad de redirección abierta en {req.url}")
               print("Redirecciones:")
               for resp in req.history:
                   print(f"\t{resp.status_code}: {resp.url}")
