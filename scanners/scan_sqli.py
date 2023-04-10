@@ -1,4 +1,4 @@
-import mechanize
+from concurrent.futures import ThreadPoolExecutor
 import requests
 from urllib import parse as urlparse
 import http.cookiejar
@@ -68,7 +68,7 @@ user_agents = [
 user_agent = random.choice (user_agents)
 headers = {'User-Agent': user_agent}
 
-def sqli(l,wi,urls_vulnerables):
+def sqli(l,wi,urls_vulnerables,threads):
     print()
     print('---------------------')
     print('\033[1;36m Testing SQL parameters:\033[0m') 
@@ -76,35 +76,40 @@ def sqli(l,wi,urls_vulnerables):
     print()
     limp=''
     found=0
-    for linea in l:   
-     for li in wordlist:
-         if li in linea:
-             #for linea in l:
+    
+    def sql_single(linea,w):
+      nonlocal found
+
+      if len(urls_vulnerables) == 0:
+         print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
+         sleep(1)
+         print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")      
+      if 'FUZZ' in linea:
+         linea= linea.replace('=FUZZ',f'={w}')
+      elif '=' and not 'FUZZ' in linea:
+        linea= linea.replace('=',f'={w}')                         
+      try:
+         req= requests.get(linea,headers=headers,timeout=50)
+         body= str(urlopen(linea).read()).lower()
+         for x in responses:
+             if x in req.text:  
+                 found= found + 1
+             if found == 1:
+                 urls_vulnerables.append('\n****************** PARAMETERS TO SQL: *********************\n')
+                 print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
+             print('\033[1;32m[+]\033[0m ' + linea)
+             urls_vulnerables.append(linea)
+      except:
+         pass
+      linea= linea.replace(f'={w}','=FUZZ')
+         
+    with ThreadPoolExecutor(max_workers=threads) as executor:
+     for linea in l:   
+         for li in wordlist:
+             if li in linea:
                  for w in wi:
-                        if len(urls_vulnerables) == 0:
-                         print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
-                         sleep(1)
-                         print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")      
-                        if 'FUZZ' in linea:
-                            linea= linea.replace('=FUZZ',f'={w}')
-                        elif '=' and not 'FUZZ' in linea:
-                            linea= linea.replace('=',f'={w}')                         
-                        try:
-                            req= requests.get(linea,headers=headers,timeout=50)
-                            body= str(urlopen(linea).read()).lower()
-                            for x in responses:
-                             if x in req.text:  
-                                 found= found + 1
-                                 if found == 1:
-                                     urls_vulnerables.append('\n****************** PARAMETERS TO SQL: *********************\n')
-                                     print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
-                                 print('\033[1;32m[+]\033[0m ' + linea)
-                                 urls_vulnerables.append(linea)
-                        except:
-                            continue
-                        linea= linea.replace(f'={w}','=FUZZ')
-         else:
-             continue
+                     executor.submit(sql_single,linea,w)
+
     if found >= 1:
          print()
          print (f'\033[1;32m[+] Found [{found}] SQL parameter/s"\033[0m')
@@ -114,24 +119,28 @@ def sqli(l,wi,urls_vulnerables):
          print("\033[1;31m[-] No results found\033[0m")
          print()        
 
-def sqli_params(l,params):
+def sqli_params(l,params,threads):
     print()
     print('---------------------')
     print('\033[1;36m Testing SQLI parameters:\033[0m') 
     print('---------------------')
     print()
-    limp=''
     found=0
-    for linea in l:   
-     for li in wordlist:
+
+    def sqlp_single():
+         nonlocal found
          if li in linea:
              found= found + 1
              if found == 1:
                  params.append('\n****************** PARAMETERS TO SQLI: *********************\n')
              print('\033[1;32m[+]\033[0m ' + linea)
              params.append(linea)
-         else:
-             continue
+
+    with ThreadPoolExecutor(max_workers=threads) as executor:
+     for linea in l:   
+         for li in wordlist:
+             executor.submit(sqlp_single,linea,li)
+
     if found >= 1:
      print()
      print (f'\033[1;32m[+] Found [{found}] SQLI parameter/s"\033[0m')
