@@ -34,15 +34,20 @@ user_agent = random.choice (user_agents)
 
 
 def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,params,threads):   
+ 
  indice=0
  while indice < len(l):
+     
      linea=l[indice]
+          
+     print()
+     print('---------------------')
+     print("\033[1;36m" + linea + '\033[0;m')
+     print('---------------------')
+     print()
+    
      try:
-         print()
-         print('---------------------')
-         print("\033[1;36m" + linea + '\033[0;m')
-         print('---------------------')
-         print()
+
          if 'http://' in linea:
              pass
          elif 'https://' in linea:
@@ -62,50 +67,46 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
              except:        
                  print(f'\033[1;31{req.status_code} [?] open Url Error\033[0m')
                  indice+=1
-                      
-         #forms = br.forms() #Finds all the forms present in webpage
-         
-         
+                          
          if h:
-                if 'strict-transport-security' not in headers:
-                    print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mNot force HSTS\033[0m')
-                    vulnerables_urls.append('****************** VULNERABLE TO HSTS: *********************')
-                    vulnerables_urls.append(linea)      
-                else:
-                    print ('\033[1;31m[-]\033[0m ' + linea + ' \033[1;31mHSTS is OK\033[0m')  
-            
+             try:   
+                 if 'strict-transport-security' not in headers:
+                     print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mNot force HSTS\033[0m')
+                     vulnerables_urls.append('****************** VULNERABLE TO HSTS: *********************')
+                     vulnerables_urls.append(linea)      
+                 else:
+                     print ('\033[1;31m[-]\033[0m ' + linea + ' \033[1;31mHSTS is OK\033[0m')  
+             except:
+                 pass
          if cl:
-                if 'x-frame-options' not in headers:
-                    if 'content-security-policy' not in headers:
-                        print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mvulnerable to Clickjacking\033[0m')
-                        vulnerables_urls.append('****************** VULNERABLE TO CLICKJACKING: *********************')
-                        vulnerables_urls.append(linea)
-                    else:
-                        print ('\033[1;31m[-]\033[0m '  + linea + ' \033[1;31mis not vulnerable to Clickjacking\033[0m')
-                else:
-                    print ('\033[1;31m[-]\033[0m '  + linea + ' \033[1;31mis not vulnerable to Clickjacking\033[0m')
-            
-         if c:    
-                    headers = [('User-agent', 'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9.0.1) Gecko/2008071615 Fedora/3.0.1-1.fc9 Firefox/3.0.1'),
-            ('Accept','text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'), ('Accept-Encoding','br'), ('Origin','https://evil.com')]
+             try:    
+                 if 'x-frame-options' not in headers:
+                     if 'content-security-policy' not in headers:
+                         print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mvulnerable to Clickjacking\033[0m')
+                         vulnerables_urls.append('****************** VULNERABLE TO CLICKJACKING: *********************')
+                         vulnerables_urls.append(linea)
+                     else:
+                         print ('\033[1;31m[-]\033[0m '  + linea + ' \033[1;31mis not vulnerable to Clickjacking\033[0m')
+                 else:
+                     print ('\033[1;31m[-]\033[0m '  + linea + ' \033[1;31mis not vulnerable to Clickjacking\033[0m')
+             except:
+                 pass            
+         if c:
+             try:           
+                     headers2 = {"Origin": "https://evil.com"}
                     
-                    req=requests.get(linea,headers=headers,timeout=50)
-                    if 'access-control-allow-origin' in headers:
-                        if 'https://evil.com' in headers:
-                            print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mis vulnerable to Cors\033[0m')
-                            vulnerables_urls.append('****************** VULNERABLE TO CORS: *********************') 
-                            vulnerables_urls.append(linea)                           
-                        else:
-                            print ('\033[1;31m[-]\033[0m ' + linea + ' \033[1;31mis not vulnerable to Cors\033[0m')
-                    else:
-                     print ('\033[1;31m[-]\033[0m ' + linea + ' \033[1;31mis not vulnerable to Cors\033[0m')
-     except:
-         print()
-         print("\033[1;36m"+" CLOSE PROGRAM " + '\033[0;m')
-         indice=len(l)
-         pass      
-    
-     try:                  
+                     req=requests.get(linea,headers=headers2,timeout=50)
+                     if 'access-control-allow-origin' in headers:
+                         if 'https://evil.com' in req.headers:
+                             print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mis vulnerable to Cors\033[0m')
+                             vulnerables_urls.append('****************** VULNERABLE TO CORS: *********************') 
+                             vulnerables_urls.append(linea)                           
+                         else:
+                             print ('\033[1;31m[-]\033[0m ' + linea + ' \033[1;31mis not vulnerable to Cors\033[0m')
+                     else:
+                         print ('\033[1;31m[-]\033[0m ' + linea + ' \033[1;31mis not vulnerable to Cors\033[0m')
+             except:
+                 pass              
          if x:
              uri=[]
              wordlist=['"><script>confirm(1)</script>','<h1>NELUXMATIZER</h1>']
