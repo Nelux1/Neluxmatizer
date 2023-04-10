@@ -88,7 +88,6 @@ def xss(l,wordlist,urls_vulnerables,threads):
          sleep(2)
          print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")      
         
-        sleep(3)
         if 'FUZZ' in linea:
          linea= linea.replace('=FUZZ',f'={li}')
          linea= linea.replace(' ','%20')
