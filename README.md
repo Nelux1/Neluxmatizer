@@ -1,7 +1,7 @@
 
 <a href='https://cafecito.app/nelux' rel='noopener' target='_blank'><img srcset='https://cdn.cafecito.app/imgs/buttons/button_6.png 1x, https://cdn.cafecito.app/imgs/buttons/button_6_2x.png 2x, https://cdn.cafecito.app/imgs/buttons/button_6_3.75x.png 3.75x' src='https://cdn.cafecito.app/imgs/buttons/button_6.png' alt='Invitame un café en cafecito.app' /></a>
 
-# Neluxmatizer
+# Neluxmatizer 4.0
 
 Neluxmatizer is a tool for pentesters to scan vulnerabilities which within the scan are:
 
@@ -49,6 +49,8 @@ Important:
 
 Only xss,sql and lfi can use wordlist payloads:
 
+Default threads= 30.
+
 Scan url with default payload:
     
     ./neluxmatizer.py -u url_to_scan.com --xss -o my_name_output.txt
@@ -64,3 +66,9 @@ Scan url with payload:
 Scan url list with payload:
     
     ./neluxmatizer.py -l list_url_to_scan.txt --xss -w my_payloads.txt -o my_name_output.txt
+    
+Scan url list with payload and more threads:  
+
+ ./neluxmatizer.py -l list_url_to_scan.txt --xss -w my_payloads.txt -t 150 -o my_name_output.txt 
+ 
+ 
