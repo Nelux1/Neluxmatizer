@@ -13,7 +13,6 @@ init()
 
     
 def parametizer(url,output,threads):
-    print()
     print('\033[1;33mSearch parameters:\n\033[0m')
     if os.name == 'nt':
       os.system('cls')
@@ -34,6 +33,18 @@ def parametizer(url,output,threads):
                  
      if response == False:
          return 
+       
+     response = unquote(response)
+     final_uris = extractor.param_extract(response , holder='FUZZ') 
+     save_it.save_func(final_uris , output , url)
+
+     if len(final_uris) == 0:
+       print(Cursor.BACK(50) + Cursor.UP(2) + '\033[1;31m[-]\033[0m ' + ' Not Parameters Found' )
+     else:    
+        print(f"\033[1;32m[+] Total urls found : {len(final_uris)}\033[1;31m")
+
+    with ThreadPoolExecutor(max_workers=threads) as executor:
+             executor.submit(par_single,url)        
        
      response = unquote(response)
      final_uris = extractor.param_extract(response , holder='FUZZ') 
