@@ -196,8 +196,7 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
 
          if r: 
              uri=[]
-             wordlist=['////example.com/','////example.com/','https:///example.com/','/<>//example.com',
-   '/\/\/example.com/','/https:example.com']
+             wordlist=['////google.com/','////google.com/','https:///google.com/','/https:google.com','<>javascript:alert(1);','/javascript:alert(1)','http:///////////google.com']
              parametizer(linea,output,threads)
              try:
                  with open(output, "r") as f:
