@@ -1,4 +1,3 @@
-import mechanize
 from urllib import parse as urlparse
 import http.cookiejar
 from parametizer.params import parametizer, parametizer2
@@ -6,7 +5,7 @@ from scanners.scan_xss import xss, xss_params
 from scanners.scan_lfi import lfi, lfi_params
 from scanners.scan_sqli import sqli, sqli_params
 from parametizer.core.save_it import save_output
-import sys,os 
+import sys,os ,requests
 from urllib.request import urlopen
 from urllib.error import URLError, HTTPError
 import random
@@ -33,24 +32,6 @@ user_agents = [
 
 user_agent = random.choice (user_agents)
 
-#Stuff related to Mechanize browser module
-br = mechanize.Browser() #Shortening the call by assigning it to a varaible "br"
-# set cookies
-cookies = http.cookiejar.LWPCookieJar()
-br.set_cookiejar(cookies)
-# Mechanize settings
-br.set_handle_equiv(True)
-br.set_handle_redirect(True)
-br.set_handle_referer(True)
-br.set_handle_robots(False)
-br.set_debug_http(False)
-br.set_debug_responses(False)
-br.set_debug_redirects(False)
-br.set_handle_refresh(mechanize._http.HTTPRefreshProcessor(), max_time = 1)
-br.addheaders = [('User-Agent', user_agent),
-('Accept','text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'), ('Accept-Encoding','br')]
-
-
 
 def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,params,threads):   
  indice=0
@@ -59,7 +40,7 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
      try:
          print()
          print('---------------------')
-         print('\033[1;32m' + linea+ ':\033[0m')
+         print("\033[1;36m" + linea + '\033[0;m')
          print('---------------------')
          print()
          if 'http://' in linea:
@@ -70,17 +51,20 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
          else:
              linea = 'http://' + linea
          try:
-             br.open(linea, timeout=10.0) #Opens the url
+             req=requests.get(linea, timeout=10.0) #Opens the url
+             headers=req.headers 
          except URLError as e:
              for line in linea:
                  linea = linea.replace('http://', 'https://')
              try:    
-                 br.open(linea)
-             except:
-                 print('[?] open Url Error')     
+                 req=requests.get(linea,timeout=10.0)
+                 headers=req.headers
+             except:        
+                 print(f'\033[1;31{req.status_code} [?] open Url Error\033[0m')
+                 indice+=1
+                      
          #forms = br.forms() #Finds all the forms present in webpage
          
-         headers = str(urlopen(linea).headers).lower()
          
          if h:
                 if 'strict-transport-security' not in headers:
@@ -101,10 +85,11 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
                 else:
                     print ('\033[1;31m[-]\033[0m '  + linea + ' \033[1;31mis not vulnerable to Clickjacking\033[0m')
             
-         if c:
-                    br.addheaders = [('User-agent', 'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9.0.1) Gecko/2008071615 Fedora/3.0.1-1.fc9 Firefox/3.0.1'),
+         if c:    
+                    headers = [('User-agent', 'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9.0.1) Gecko/2008071615 Fedora/3.0.1-1.fc9 Firefox/3.0.1'),
             ('Accept','text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'), ('Accept-Encoding','br'), ('Origin','https://evil.com')]
-
+                    
+                    req=requests.get(linea,headers=headers,timeout=50)
                     if 'access-control-allow-origin' in headers:
                         if 'https://evil.com' in headers:
                             print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mis vulnerable to Cors\033[0m')
@@ -114,10 +99,16 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
                             print ('\033[1;31m[-]\033[0m ' + linea + ' \033[1;31mis not vulnerable to Cors\033[0m')
                     else:
                      print ('\033[1;31m[-]\033[0m ' + linea + ' \033[1;31mis not vulnerable to Cors\033[0m')
-         
+     except:
+         print()
+         print("\033[1;36m"+" CLOSE PROGRAM " + '\033[0;m')
+         indice=len(l)
+         pass      
+    
+     try:                  
          if x:
              uri=[]
-             wordlist=['"><script>confirm(1)</script>']
+             wordlist=['"><script>confirm(1)</script>','<h1>NELUXMATIZER</h1>']
              parametizer(linea,output,threads)
              try:
                  with open(output, "r") as f:
@@ -196,7 +187,7 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
 
          if r: 
              uri=[]
-             wordlist=['////google.com/','////google.com/','https:///google.com/','/https:google.com','<>javascript:alert(1);','/javascript:alert(1)','http:///////////google.com']
+             wordlist=['////google.com/','////google.com/','https:///google.com/','/https:google.com','<>javascript:alert(1);','http:///////////google.com']
              parametizer(linea,output,threads)
              try:
                  with open(output, "r") as f:
@@ -277,6 +268,7 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
              except: 
                   pass
      except:
+         print()
          print("\033[1;36m"+" CLOSE PROGRAM " + '\033[0;m')
          indice=len(l)
          pass      
