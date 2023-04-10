@@ -1,4 +1,4 @@
-import mechanize
+from concurrent.futures import ThreadPoolExecutor
 import requests
 from urllib import parse as urlparse
 import http.cookiejar
@@ -59,7 +59,7 @@ user_agents = [
 user_agent = random.choice (user_agents)
 headers = {'User-Agent': user_agent}
 
-def ssti(l,wi,urls_vulnerables):
+def ssti(l,wi,urls_vulnerables,threads):
     print()
     print('---------------------')
     print('\033[1;36m Testing SSTI:\033[0m') 
@@ -67,38 +67,46 @@ def ssti(l,wi,urls_vulnerables):
     print()
     limp=''
     found=0
-    for linea in l:   
-     for li in wordlist:
-         if li in linea:
-            for line in l:
-                for w in wi:
-                     if len(urls_vulnerables) == 0:
-                         print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
-                         sleep(1)
-                         print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")      
 
-                     if 'FUZZ' in line:
+    def ssti_single(line,w):
+     nonlocal found      
+
+     if len(urls_vulnerables) == 0:
+         print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
+         sleep(1)
+         print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")      
+
+     if 'FUZZ' in line:
                          line= line.replace('=FUZZ',f'={w}')
                          line= line.replace(' ','%20')
-                     elif '=' and not 'FUZZ' in line:
+     elif '=' and not 'FUZZ' in line:
                          line= line.replace('=',f'={w}')
                          line= line.replace(' ','%20')                         
-                     try:
-                         req= requests.get(line,headers=headers,timeout=50)
-                         body= str(urlopen(line).read()).lower()
-                         if 'root:x' in body:
-                             found= found + 1
-                             if found == 1:
-                                 urls_vulnerables.append('\n****************** VULNERABLE TO SSTI: *********************\n')
-                                 print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
-                             print ('\033[1;32m[+]\033[0m ' + linea)
-                             urls_vulnerables.append(linea)  
-                     except:
-                         continue
-                     line= line.replace('%20',' ')
-                     line= line.replace(f'{w}',limp)
-         else:
-             continue 
+     try:
+         req= requests.get(line,headers=headers,timeout=50)
+         body= str(urlopen(line).read()).lower()
+         if 'root:x' in body:
+             found= found + 1
+         if found == 1:
+             urls_vulnerables.append('\n****************** VULNERABLE TO SSTI: *********************\n')
+             print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
+         print ('\033[1;32m[+]\033[0m ' + linea)
+         urls_vulnerables.append(linea)  
+     except:
+         pass
+     
+     line= line.replace('%20',' ')
+     line= line.replace(f'{w}',limp)
+
+    
+    with ThreadPoolExecutor(max_workers=threads) as executor:
+     for linea in l:   
+         for li in wordlist:
+             if li in linea:
+                 for line in l:
+                      for w in wi:    
+                         executor.submit(ssti_single,line,w)
+    
     if found >= 1:
      print()   
      print (f'\033[1;32m[+] Found [{found}] SSTI parameter/s"\033[0m')
@@ -108,24 +116,29 @@ def ssti(l,wi,urls_vulnerables):
      print("\033[1;31m[-] No results found\033[0m")
      print()
      
-def ssti_params(l,params):
+def ssti_params(l,params,threads):
     print()
     print('---------------------')
     print('\033[1;36m Testing SSTI parameters:\033[0m') 
     print('---------------------')
     print()
-    limp=''
     found=0
-    for linea in l:   
-     for li in wordlist:
+
+    def sstip_single(linea,li):
+         nonlocal found
          if li in linea:
              found= found + 1
              if found == 1:
                  params.append('\n****************** PARAMETERS TO SSTI: *********************\n') 
              print('\033[1;32m[+]\033[0m ' + linea)
              params.append(linea)
-         else:
-             continue
+
+         
+    with ThreadPoolExecutor(max_workers=threads) as executor:
+         for linea in l: 
+             for li in wordlist:
+                 executor.submit(sstip_single,linea,li)
+
     if found >= 1:
      print()
      print (f'\033[1;32m[+] Found [{found}] SSTI parameter/s"\033[0m')
