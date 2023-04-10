@@ -33,9 +33,10 @@ def parametizer(url,output,threads):
        response=''
                  
      if response == False:
-         return 
+       return 
        
-     response = unquote(response)
+     response=unquote(response)
+     
      final_uris = extractor.param_extract(response , holder='FUZZ') 
      save_it.save_func(final_uris , output , url)
 
@@ -48,7 +49,6 @@ def parametizer(url,output,threads):
     with ThreadPoolExecutor(max_workers=threads) as executor:
              executor.submit(par_single,url)        
     
-
 def parametizer2(url, output):
     
     print('\033[1;33mSearch parameters:\n\033[0m')
@@ -69,62 +69,3 @@ def parametizer2(url, output):
     save_it.save_func(final_uris , output , url)
 
     print(f"\033[1;32m[+] Total urls found : {len(final_uris)}\033[1;31m")
-
-
-
-
-
-    
-
-     response = unquote(response)
-     final_uris = extractor.param_extract(response , holder='FUZZ') 
-     save_it.save_func(final_uris , output , url)
-
-     if len(final_uris) == 0:
-       print(Cursor.BACK(50) + Cursor.UP(2) + '\033[1;31m[-]\033[0m ' + ' Not Parameters Found' )
-     else:    
-        print(f"\033[1;32m[+] Total urls found : {len(final_uris)}\033[1;31m")
-
-    with ThreadPoolExecutor(max_workers=threads) as executor:
-             executor.submit(par_single,url)        
-       
-     response = unquote(response)
-     final_uris = extractor.param_extract(response , holder='FUZZ') 
-     save_it.save_func(final_uris , output , url)
-
-     if len(final_uris) == 0:
-       print()
-       print(Cursor.BACK(50) + Cursor.UP(2) + f"\033[1;32m[-] Not Parameters Found\033[1;31m" )
-     else:    
-        print(f"\033[1;32m[+] Total urls found : {len(final_uris)}\033[1;31m")
-
-    with ThreadPoolExecutor(max_workers=threads) as executor:
-             executor.submit(par_single,url)        
-    
-
-def parametizer2(url, output):
-    
-    print('\033[1;33mSearch parameters:\n\033[0m')
-    if os.name == 'nt':
-      os.system('cls')
-    url = f"https://web.archive.org/cdx/search/cdx?url=*.{url}/*&output=txt&fl=original&collapse=urlkey&page=/"    
-    retry = True
-    retries = 0
-    while retry == True and retries <= int(3):
-             response, retry = requester.connector(url)
-             retry = retry
-             retries   += 1
-    if response == False:
-         return 
-    response = unquote(response)
-
-    final_uris = extractor.param_extract2(response)
-    save_it.save_func(final_uris , output , url)
-
-    print(f"\033[1;32m[+] Total urls found : {len(final_uris)}\033[1;31m")
-
-
-
-
-
-    
