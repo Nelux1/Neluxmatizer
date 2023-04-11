@@ -69,6 +69,6 @@ Scan url list with payload:
     
 Scan url list with payload and more threads:  
 
- ./neluxmatizer.py -l list_url_to_scan.txt --xss -w my_payloads.txt -t 150 -o my_name_output.txt 
+    ./neluxmatizer.py -l list_url_to_scan.txt --xss -w my_payloads.txt -t 150 -o my_name_output.txt 
  
  
