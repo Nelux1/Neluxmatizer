@@ -33,10 +33,9 @@ def parametizer(url,output,threads):
        response=''
                  
      if response == False:
-       return 
+         return 
        
-     response=unquote(response)
-     
+     response = unquote(response)
      final_uris = extractor.param_extract(response , holder='FUZZ') 
      save_it.save_func(final_uris , output , url)
 
@@ -49,6 +48,7 @@ def parametizer(url,output,threads):
     with ThreadPoolExecutor(max_workers=threads) as executor:
              executor.submit(par_single,url)        
     
+
 def parametizer2(url, output):
     
     print('\033[1;33mSearch parameters:\n\033[0m')
@@ -69,3 +69,9 @@ def parametizer2(url, output):
     save_it.save_func(final_uris , output , url)
 
     print(f"\033[1;32m[+] Total urls found : {len(final_uris)}\033[1;31m")
+
+
+
+
+
+    
