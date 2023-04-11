@@ -103,11 +103,6 @@ def redirect(l,wi,urls_vulnerables,threads):
 
     def red_single(line,w):
      nonlocal found
-
-     if found == 0:
-         print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
-         sleep(2)
-         print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")
      
      if 'FUZZ' in line:
          line= line.replace('=FUZZ',f'={w}')
@@ -131,13 +126,13 @@ def redirect(l,wi,urls_vulnerables,threads):
              if 'https://' in new_url or 'http://' in new_url or 'javascript:' in new_url:
                  print('posible redirect vuln Location' + req.url)
                  found= found + 1         
-         if 'https://google.com' in body:
-             found= found + 1
          if found == 1:
                  urls_vulnerables.append('\n****************** VULNERABLE TO OPENREDIRECT: *********************\n')             
                  print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
-         print ('\033[1;32m[+]\033[0m ' + req.url)    
-         urls_vulnerables.append(linea)          
+         #print ('\033[1;32m[+]\033[0m ' + req.url)    
+         #urls_vulnerables.append(linea)
+         
+                    
      except:
          pass
      line= line.replace('%20',' ')
@@ -187,4 +182,5 @@ def redirect_params(l,params,threads):
      print (f'\033[1;32m[+] Found [{found}] REDIRECT parameter/s"\033[0m')
     else:
      print("\033[1;31m[-] No results found\033[0m")
+
 
