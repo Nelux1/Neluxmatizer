@@ -68,3 +68,4 @@ def idor(l,w,urls_vulnerables,params,threads):
     else:
      print("\033[1;31m[-] No results found\033[0m")
      print()
+
