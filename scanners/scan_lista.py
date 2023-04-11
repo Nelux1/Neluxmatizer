@@ -119,8 +119,6 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
              #uri=[]
              wordlist=['"><script>confirm(1)</script>','<h1>NELUXMATIZER</h1>']
              #parametizer(linea,output,threads)
-             #aca empieza el cambio
-             print('hey aca')
              if op:
                      xss_params(uri,params,threads)
              else:                                             
