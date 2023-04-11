@@ -129,7 +129,7 @@ def selector():
     c,cl,h,x,l,s,i,r,rc,sr,sst,o,op=False,False,False,False,False,False,False,False,False,False,False,False,False 
     if args.url:
          url.append(str(args.url))                
-    elif args.usedlist:
+    if args.usedlist:
          with open(args.usedlist, "r") as f:
              for q in f.readlines():
                  q = q.strip()
@@ -153,15 +153,14 @@ def selector():
     if args.ssti:
          sst=True                        
     if args.all:
-         c,cl,h,x,l,s,i,r,rc,sr,sst,=True,True,True,True,True,True,True,True,True,True,True 
+         c,cl,h,x,l,s,i,r,rc,sr,sst=True,True,True,True,True,True,True,True,True,True,True 
     if args.params:
          c,cl,h=False,False,False
+         fname= os.path.join(args.params)
+         op=True   
     if args.output:
          fname= os.path.join(args.output)
          o=True
-    if args.params:
-         fname= os.path.join(args.params)
-         op=True            
     if args.xss and not args.word:
          x=True
     if args.sql and not args.word:
@@ -169,7 +168,7 @@ def selector():
     if args.lfi and not args.word:
          l=True                                       
     if not args.word:        
-     all_list(url,c,cl,h,x,l,s,i,r,rc,sr,sst,output,fname,o,urls_vulnerables,op,urls_params,threads)        
+      all_list(url,c,cl,h,x,l,s,i,r,rc,sr,sst,output,fname,o,urls_vulnerables,op,urls_params,threads)        
     if args.word:
          with open(args.word, "r") as f:
              for i in f.readlines():
