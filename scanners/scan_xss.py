@@ -5,7 +5,6 @@ import requests
 from urllib import parse as urlparse
 import http.cookiejar
 import os, sys
-from pynput import keyboard as kb
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 import random
@@ -86,7 +85,7 @@ def xss(l,wordlist,urls_vulnerables,threads):
         if found == 0:
          print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
          sleep(2)
-         print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")      
+            
         
         if 'FUZZ' in linea:
          linea= linea.replace('=FUZZ',f'={li}')
@@ -116,6 +115,9 @@ def xss(l,wordlist,urls_vulnerables,threads):
        for linea in l:
           for li in wordlist:
              executor.submit(xss_single,linea,li)
+             if found == 0:
+                  print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")  
+                  sleep(2)
 
     if found >= 1:
      print()   
