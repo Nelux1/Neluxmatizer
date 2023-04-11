@@ -69,9 +69,3 @@ def parametizer2(url, output):
     save_it.save_func(final_uris , output , url)
 
     print(f"\033[1;32m[+] Total urls found : {len(final_uris)}\033[1;31m")
-
-
-
-
-
-    
