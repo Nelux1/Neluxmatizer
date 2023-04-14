@@ -80,6 +80,10 @@ def sqli(l,wi,urls_vulnerables,threads):
     def sql_single(linea,w):
       nonlocal found
 
+      if found == 0:
+         print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
+         sleep(1)
+
       if 'FUZZ' in linea:
          linea= linea.replace('=FUZZ',f'={w}')
       elif '=' and not 'FUZZ' in linea:
@@ -105,6 +109,9 @@ def sqli(l,wi,urls_vulnerables,threads):
              if li in linea:
                  for w in wi:
                      executor.submit(sql_single,linea,w)
+                     if found == 0:
+                         print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")  
+                         sleep(1)
 
     if found >= 1:
          print()
