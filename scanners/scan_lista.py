@@ -1,3 +1,9 @@
+from parametizer.core import requester
+from parametizer.core import extractor
+from parametizer.core import save_it
+from urllib.parse import unquote
+
+
 from urllib import parse as urlparse
 import http.cookiejar
 from parametizer.params import parametizer, parametizer2
@@ -32,6 +38,27 @@ user_agents = [
 
 user_agent = random.choice (user_agents)
 
+def parametizer3(url,threads):
+    
+    print('\033[1;33mSearch parameters:\n\033[0m')
+
+    url = f"https://web.archive.org/cdx/search/cdx?url=*.{url}/*&output=txt&fl=original&collapse=urlkey&page=/"    
+    retry = True
+    retries = 0
+    while retry == True and retries <= int(3):
+             response, retry = requester.connector(url)
+             retry = retry
+             retries   += 1
+    if response == False:
+         return 
+    response = unquote(response)   
+
+    urls= extractor.param_extract(response)
+    print(urls)
+    print(f"\033[1;32m[+] Total urls found : {len(urls)}\033[1;31m")
+    return urls
+
+    
 
 def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,params,threads):   
  
@@ -71,7 +98,7 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
                 if h:   
                         if 'strict-transport-security' not in headers:
                             print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mNot force HSTS\033[0m')
-                            vulnerables_urls.append('****************** VULNERABLE TO HSTS: *********************')
+                            vulnerables_urls.append('\n****************** VULNERABLE TO HSTS: *********************\n')
                             vulnerables_urls.append(linea)      
                         else:
                             print ('\033[1;31m[-]\033[0m ' + linea + ' \033[1;31mHSTS is OK\033[0m')  
@@ -79,7 +106,7 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
                         if 'x-frame-options' not in headers:
                             if 'content-security-policy' not in headers:
                                 print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mvulnerable to Clickjacking\033[0m')
-                                vulnerables_urls.append('****************** VULNERABLE TO CLICKJACKING: *********************')
+                                vulnerables_urls.append('\n****************** VULNERABLE TO CLICKJACKING: *********************\n')
                                 vulnerables_urls.append(linea)
                             else:
                                 print ('\033[1;31m[-]\033[0m '  + linea + ' \033[1;31mis not vulnerable to Clickjacking\033[0m')
@@ -92,7 +119,7 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
                             if 'access-control-allow-origin' in req2.headers:
                                 if 'https://evil.com' in req2.headers:
                                     print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mis vulnerable to Cors\033[0m')
-                                    vulnerables_urls.append('****************** VULNERABLE TO CORS: *********************') 
+                                    vulnerables_urls.append('\n****************** VULNERABLE TO CORS: *********************\n') 
                                     vulnerables_urls.append(linea)                           
                                 else:
                                     print ('\033[1;31m[-]\033[0m ' + linea + ' \033[1;31mis not vulnerable to Cors\033[0m')
@@ -103,6 +130,7 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
 
          try:
              uri=[]
+             uri.append(linea)
              parametizer(linea,output,threads)
              with open(output, "r") as f:
                      for q in f.readlines():
@@ -161,7 +189,7 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
                      rce(uri,wordlist,vulnerables_urls,threads)           
          if r: 
              #uri=[]
-             wordlist=['////google.com/','////google.com/','https:///google.com/','/https:google.com','<>javascript:alert(1);','http:///////////google.com']
+             wordlist=['////google.com/','////google.com/','https:///google.com/','/https:google.com','<>javascript:alert(1);','http:///////////google.com','javascript:alert(1)']
              #parametizer(linea,output,threads)                             
              if op:
                          redirect_params(uri,params,threads)
