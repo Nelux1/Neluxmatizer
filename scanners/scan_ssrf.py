@@ -9,6 +9,17 @@ from urllib.error import URLError, HTTPError
 from colorama import Back, Fore, Cursor, init
 from time import sleep
 init()
+from concurrent.futures import ThreadPoolExecutor
+import requests
+from urllib import parse as urlparse
+import http.cookiejar
+import sys,os
+import random
+from urllib.request import urlopen
+from urllib.error import URLError, HTTPError
+from colorama import Back, Fore, Cursor, init
+from time import sleep
+init()
 
 wordlist=[
 "access", 
@@ -103,7 +114,10 @@ def ssrf(l,wi,urls_vulnerables,threads):
     def ssrf_single(line,w):
      nonlocal found
 
-
+     if found == 0:
+         print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
+         sleep(1)
+         
      if 'FUZZ' in line:
          line= line.replace('=FUZZ',f'={w}')
          line= line.replace(' ','%20')
@@ -133,6 +147,10 @@ def ssrf(l,wi,urls_vulnerables,threads):
                  for line in l:
                      for w in wi:         
                          executor.submit(ssrf_single,line,w)
+                         if found == 0:
+                             print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")  
+                             sleep(1)
+
 
     if found >= 1:
      print()   
