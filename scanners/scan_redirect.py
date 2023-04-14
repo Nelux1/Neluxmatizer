@@ -100,9 +100,15 @@ def redirect(l,wi,urls_vulnerables,threads):
     print()
     limp=''
     found=0
+    
+    
 
     def red_single(line,w):
      nonlocal found
+     
+     if found == 0:
+         print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
+         sleep(1)
      
      if 'FUZZ' in line:
          line= line.replace('=FUZZ',f'={w}')
@@ -110,42 +116,72 @@ def redirect(l,wi,urls_vulnerables,threads):
      elif '=' and not 'FUZZ' in line:
          line= line.replace('=',f'={w}')
          line= line.replace(' ','%20') 
-
+         
      try:
          req= requests.get(line,headers=headers,timeout=50,allow_redirects=True)
-         body= str(urlopen(line).read()).lower()
+         body= req.text
+
+         if 'alert' in body:
+              found= found + 1
+              if found == 1:
+                 urls_vulnerables.append('\n****************** VULNERABLE TO OPENREDIRECT: *********************\n')             
+                 print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')              
+              print ('\033[1;32m[+]\033[0m ' + req.url)
+              print("\033[1;32mAlerts in body:\033[0m ")             
+         
          if len(req.history) >= 2:
               # Advertencia de posible vulnerabilidad de redirección abierta
-              print(f"[ALERTA] Se ha detectado una posible vulnerabilidad de redirección abierta en {req.url}")
-              print("Redirecciones:")
+              found= found + 1
+              if found == 1:
+                 urls_vulnerables.append('\n****************** VULNERABLE TO OPENREDIRECT: *********************\n')             
+                 print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')              
+              print ('\033[1;32m[+]\033[0m ' + resp.url)
+              print("\033[1;32mRedirecciones:\033[0m ")
               for resp in req.history:
                   print(f"\t{resp.status_code}: {resp.url}")
-              found= found + 1
+              urls_vulnerables.append(linea)
          if req.status_code in (302,301,307,303):
              new_url=req.headers['location']
              if 'https://' in new_url or 'http://' in new_url or 'javascript:' in new_url:
                  print('posible redirect vuln Location' + req.url)
                  found= found + 1         
-         if found == 1:
-                 urls_vulnerables.append('\n****************** VULNERABLE TO OPENREDIRECT: *********************\n')             
-                 print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
-         #print ('\033[1;32m[+]\033[0m ' + req.url)    
-         #urls_vulnerables.append(linea)
-         
-                    
+                             
      except:
          pass
+     
      line= line.replace('%20',' ')
      line= line.replace(f'{w}',limp)
 
-    with ThreadPoolExecutor(max_workers=threads) as executor:            
+    with ThreadPoolExecutor(max_workers=threads) as executor:          
      for linea in l:      
          for li in wordlist:
             if li in linea:
              for line in l:
                  for w in wi:
                      executor.submit(red_single,line,w)
+                     if found == 0:
+                         print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")  
+                         sleep(1)
+    
+    
+    lu=l[0] + ".google.com"
+    req= requests.get(line,headers=headers,timeout=50,allow_redirects=True)
+         #body= str(urlopen(line).read()).lower()
+         
+    if len(req.history) >= 2:
+         found= found + 1
+         if found == 1:
+                 urls_vulnerables.append('\n****************** VULNERABLE TO OPENREDIRECT: *********************\n')             
+                 print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
+         print ('\033[1;32m[+]\033[0m ' + line)
+         print("\033[1;32mRedirecciones:\033[0m ")
+         for resp in req.history:
+             print(f"\t{resp.status_code}: {resp.url}")
 
+         urls_vulnerables.append(linea)
+    
+    
+    
     if found >= 1:
      print()   
      print (f'\033[1;32m[+] Found [{found}] REDIRECT parameter/s"\033[0m')
