@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 import requests
+from bs4 import BeautifulSoup
 from urllib import parse as urlparse
 import http.cookiejar
 import sys,os
@@ -72,7 +73,10 @@ def rce(l,wi,urls_vulnerables,threads):
     def rce_single(line,w):
      nonlocal found
                      
-     
+     if found == 0:
+         print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
+         sleep(1)
+
      if 'FUZZ' in line:
          line= line.replace('=FUZZ',f'={w}')
          line= line.replace(' ','%20')
@@ -81,8 +85,8 @@ def rce(l,wi,urls_vulnerables,threads):
          line= line.replace(' ','%20')                         
      try:
          req= requests.get(line,headers=headers,timeout=50)
-         body= str(urlopen(line).read()).lower()
-         if 'root:x' in body or 'inet' in body or 'host name' in body:
+         body= BeautifulSoup(req.text,"html.parser")
+         if 'root:x' in body.get_text() or 'inet' in body.get_text() or 'host name' in body.get_text() or "IPv4" in body.get_text():
              found= found + 1
              if found == 1:
                  urls_vulnerables.append('\n****************** VULNERABLE TO RCE: *********************\n')             
@@ -103,6 +107,10 @@ def rce(l,wi,urls_vulnerables,threads):
                  for line in l:
                      for w in wi:
                          executor.submit(rce_single,line,w)
+                         if found == 0:
+                             print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")  
+                             sleep(1)
+
 
     if found >= 1:
      print()   
