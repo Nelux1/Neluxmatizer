@@ -71,7 +71,10 @@ def lfi(l,wi,urls_vulnerables,threads):
 
     def lfi_single(line,w):
      nonlocal found
-
+     
+     if found == 0:
+         print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
+         sleep(1)     
 
      if 'FUZZ' in line:
          line= line.replace('=FUZZ',f'={w}')
@@ -103,6 +106,10 @@ def lfi(l,wi,urls_vulnerables,threads):
                  for line in l:
                      for w in wi:
                          executor.submit(lfi_single,line,w)   
+                         if found == 0:
+                             print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")  
+                             sleep(1)
+
 
     if found >= 1:
      print()   
