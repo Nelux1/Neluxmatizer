@@ -67,10 +67,14 @@ def ssti(l,wi,urls_vulnerables,threads):
     print()
     limp=''
     found=0
-
+     
     def ssti_single(line,w):
      nonlocal found      
      
+     if found == 0:
+         print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
+         sleep(1)
+
 
      if 'FUZZ' in line:
                          line= line.replace('=FUZZ',f'={w}')
@@ -102,6 +106,9 @@ def ssti(l,wi,urls_vulnerables,threads):
                  for line in l:
                       for w in wi:    
                          executor.submit(ssti_single,line,w)
+                         if found == 1:
+                                urls_vulnerables.append('\n****************** VULNERABLE TO OPENREDIRECT: *********************\n')             
+                                print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')                     
     
     if found >= 1:
      print()   
