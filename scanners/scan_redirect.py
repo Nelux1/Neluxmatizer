@@ -165,7 +165,7 @@ def redirect(l,wi,urls_vulnerables,threads):
     
     
     lu=l[0] + ".google.com"
-    req= requests.get(line,headers=headers,timeout=50,allow_redirects=True)
+    req= requests.get(lu,headers=headers,timeout=50,allow_redirects=True)
          #body= str(urlopen(line).read()).lower()
          
     if len(req.history) >= 2:
@@ -173,12 +173,12 @@ def redirect(l,wi,urls_vulnerables,threads):
          if found == 1:
                  urls_vulnerables.append('\n****************** VULNERABLE TO OPENREDIRECT: *********************\n')             
                  print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
-         print ('\033[1;32m[+]\033[0m ' + line)
+         print ('\033[1;32m[+]\033[0m ' + lu)
          print("\033[1;32mRedirecciones:\033[0m ")
          for resp in req.history:
              print(f"\t{resp.status_code}: {resp.url}")
 
-         urls_vulnerables.append(linea)
+         urls_vulnerables.append(lu)
     
     
     
