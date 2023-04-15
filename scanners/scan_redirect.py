@@ -118,16 +118,7 @@ def redirect(l,wi,urls_vulnerables,threads):
          line= line.replace(' ','%20') 
          
      try:
-         req= requests.get(line,headers=headers,timeout=50,allow_redirects=True)
-         body= req.text
-
-         if 'alert' in body:
-              found= found + 1
-              if found == 1:
-                 urls_vulnerables.append('\n****************** VULNERABLE TO OPENREDIRECT: *********************\n')             
-                 print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')              
-              print ('\033[1;32m[+]\033[0m ' + req.url)
-              print("\033[1;32mAlerts in body:\033[0m ")             
+         req= requests.get(line,headers=headers,timeout=50,allow_redirects=True)     
          
          if len(req.history) >= 2:
               # Advertencia de posible vulnerabilidad de redirección abierta
@@ -162,13 +153,13 @@ def redirect(l,wi,urls_vulnerables,threads):
                      if found == 0:
                          print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")  
                          sleep(1)
+    try:
     
-    
-    lu=l[0] + ".google.com"
-    req= requests.get(lu,headers=headers,timeout=50,allow_redirects=True)
+     lu=l[0] + ".google.com"
+     req= requests.get(lu,headers=headers,timeout=50,allow_redirects=True)
          #body= str(urlopen(line).read()).lower()
          
-    if len(req.history) >= 2:
+     if len(req.history) >= 2:
          found= found + 1
          if found == 1:
                  urls_vulnerables.append('\n****************** VULNERABLE TO OPENREDIRECT: *********************\n')             
@@ -179,8 +170,8 @@ def redirect(l,wi,urls_vulnerables,threads):
              print(f"\t{resp.status_code}: {resp.url}")
 
          urls_vulnerables.append(lu)
-    
-    
+    except:
+       pass
     
     if found >= 1:
      print()   
@@ -218,5 +209,3 @@ def redirect_params(l,params,threads):
      print (f'\033[1;32m[+] Found [{found}] REDIRECT parameter/s"\033[0m')
     else:
      print("\033[1;31m[-] No results found\033[0m")
-
-
