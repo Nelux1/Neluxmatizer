@@ -1,11 +1,4 @@
-from parametizer.core import requester
-from parametizer.core import extractor
-from parametizer.core import save_it
-from urllib.parse import unquote
-
-
 from urllib import parse as urlparse
-import http.cookiejar
 from parametizer.params import parametizer, parametizer2
 from scanners.scan_xss import xss, xss_params
 from scanners.scan_lfi import lfi, lfi_params
@@ -63,6 +56,7 @@ def parametizer3(url,threads):
 def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,params,threads):   
  
  indice=0
+ p=True
  while indice < len(l):
      
      linea=l[indice]
@@ -96,13 +90,15 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
                  indice+=1
          try:                          
                 if h:   
+                        p=False
                         if 'strict-transport-security' not in headers:
                             print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mNot force HSTS\033[0m')
                             vulnerables_urls.append('\n****************** VULNERABLE TO HSTS: *********************\n')
                             vulnerables_urls.append(linea)      
                         else:
                             print ('\033[1;31m[-]\033[0m ' + linea + ' \033[1;31mHSTS is OK\033[0m')  
-                if cl:    
+                if cl:  
+                        p=False  
                         if 'x-frame-options' not in headers:
                             if 'content-security-policy' not in headers:
                                 print ('\033[1;32m[+]\033[0m ' + linea + ' \033[1;32mvulnerable to Clickjacking\033[0m')
@@ -113,6 +109,7 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
                         else:
                             print ('\033[1;31m[-]\033[0m '  + linea + ' \033[1;31mis not vulnerable to Clickjacking\033[0m')            
                 if c:           
+                            p=False
                             headers2 = {"Origin": "https://evil.com"}
                             
                             req2=requests.get(linea,headers=headers2,timeout=50)
@@ -128,17 +125,18 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
          except:
              pass
 
-         try:
+         try: 
              uri=[]
              uri.append(linea)
-             parametizer(linea,output,threads)
-             with open(output, "r") as f:
-                     for q in f.readlines():
-                         q = q.strip()
-                         if q == "" or q.startswith("#"):
-                             pass
-                         uri.append(q)
-                                    
+             if p:
+                 parametizer(linea,output,threads)
+                 with open(output, "r") as f:
+                        for q in f.readlines():
+                            q = q.strip()
+                            if q == "" or q.startswith("#"):
+                                pass
+                            uri.append(q)
+                                        
          except:
              indice+=1
              continue                     
