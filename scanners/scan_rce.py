@@ -1,6 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
 import requests
-from bs4 import BeautifulSoup
 from urllib import parse as urlparse
 import http.cookiejar
 import sys,os
@@ -85,8 +84,8 @@ def rce(l,wi,urls_vulnerables,threads):
          line= line.replace(' ','%20')                         
      try:
          req= requests.get(line,headers=headers,timeout=50)
-         body= BeautifulSoup(req.text,"html.parser")
-         if 'root:x' in body.get_text() or 'inet' in body.get_text() or 'host name' in body.get_text() or "IPv4" in body.get_text():
+         body= req.text
+         if 'root:x' in body or 'inet' in body or 'host name' in body or "IPv4" in body:
              found= found + 1
              if found == 1:
                  urls_vulnerables.append('\n****************** VULNERABLE TO RCE: *********************\n')             
