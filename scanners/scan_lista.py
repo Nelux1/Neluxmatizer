@@ -31,28 +31,7 @@ user_agents = [
 
 user_agent = random.choice (user_agents)
 
-def parametizer3(url,threads):
-    
-    print('\033[1;33mSearch parameters:\n\033[0m')
-
-    url = f"https://web.archive.org/cdx/search/cdx?url=*.{url}/*&output=txt&fl=original&collapse=urlkey&page=/"    
-    retry = True
-    retries = 0
-    while retry == True and retries <= int(3):
-             response, retry = requester.connector(url)
-             retry = retry
-             retries   += 1
-    if response == False:
-         return 
-    response = unquote(response)   
-
-    urls= extractor.param_extract(response)
-    print(urls)
-    print(f"\033[1;32m[+] Total urls found : {len(urls)}\033[1;31m")
-    return urls
-
-    
-
+   
 def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,params,threads):   
  
  indice=0
@@ -128,6 +107,8 @@ def all_list(l,c,cl,h,x,lf,s,i,r,rc,sr,sst,output,fname,o,vulnerables_urls,op,pa
          try: 
              uri=[]
              uri.append(linea)
+             if x or s or i or rc or r or sr or lf or sst:
+                 p=True
              if p:
                  parametizer(linea,output,threads)
                  with open(output, "r") as f:
