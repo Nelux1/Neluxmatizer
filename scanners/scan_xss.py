@@ -1,6 +1,7 @@
 from cgitb import text
 import mechanize
 import signal
+from bs4 import BeautifulSoup
 import requests
 from urllib import parse as urlparse
 import http.cookiejar
@@ -80,12 +81,12 @@ def xss(l,wordlist,urls_vulnerables,threads):
     found=0
 
     def xss_single(linea,li):
+        
         nonlocal found
-
+        
         if found == 0:
          print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
          sleep(2)
-            
         
         if 'FUZZ' in linea:
          linea= linea.replace('=FUZZ',f'={li}')
@@ -110,14 +111,16 @@ def xss(l,wordlist,urls_vulnerables,threads):
          pass        
         linea= linea.replace('%20',' ')
         linea= linea.replace(f'{li}',limp)
+ 
     
     with ThreadPoolExecutor(max_workers=threads) as executor:
        for linea in l:
           for li in wordlist:
              executor.submit(xss_single,linea,li)
              if found == 0:
-                  print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")  
-                  sleep(2)
+                 print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")  
+                 sleep(2)            
+ 
 
     if found >= 1:
      print()   
@@ -157,4 +160,3 @@ def xss_params(l,params,threads):
      print("\033[1;31m[-] No results found\033[0m")
      print() 
 
-        
