@@ -28,7 +28,7 @@ print("\033[1;36m"+'''
     @@@@    @@@@@ @@@@        @@@@      @@@@    @@@   @@   @@   
     @@@@     @@@@ @@@@@@@@@@  @@@@@@@@  @@@@@@@@@@@ @@@@   @@@@ 
 
-                                 by Marcos Suarez for pentesters v4.0.0
+                                 by Marcos Suarez for pentesters v4.1.0
 
 '''+ '\033[0;m')
 
