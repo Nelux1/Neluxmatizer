@@ -73,7 +73,7 @@ def ssti(l,wi,urls_vulnerables,threads):
      
      if found == 0:
          print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
-         sleep(1)
+         sleep(2)
 
 
      if 'FUZZ' in line:
@@ -87,11 +87,11 @@ def ssti(l,wi,urls_vulnerables,threads):
          body= str(urlopen(line).read()).lower()
          if 'root:x' in body:
              found= found + 1
-         if found == 1:
-             urls_vulnerables.append('\n****************** VULNERABLE TO SSTI: *********************\n')
-             print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
-         print ('\033[1;32m[+]\033[0m ' + linea)
-         urls_vulnerables.append(linea)  
+             if found == 1:
+                 urls_vulnerables.append('\n****************** VULNERABLE TO SSTI: *********************\n')
+                 print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
+             print ('\033[1;32m[+]\033[0m ' + linea)
+             urls_vulnerables.append(linea)  
      except:
          pass
      
@@ -106,10 +106,11 @@ def ssti(l,wi,urls_vulnerables,threads):
                  for line in l:
                       for w in wi:    
                          executor.submit(ssti_single,line,w)
-                         if found == 1:
-                                urls_vulnerables.append('\n****************** VULNERABLE TO OPENREDIRECT: *********************\n')             
-                                print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')                     
+                         if found == 0:
+                             print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")  
+                             sleep(2)                
     
+   
     if found >= 1:
      print()   
      print (f'\033[1;32m[+] Found [{found}] SSTI parameter/s"\033[0m')
