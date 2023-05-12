@@ -1,8 +1,7 @@
 import mechanize
 import requests
 from urllib import parse as urlparse
-import http.cookiejar
-import sys,os
+from parametizer.progress import update_progress
 import random
 from urllib.request import urlopen
 from urllib.error import URLError, HTTPError
@@ -94,21 +93,19 @@ user_agent = random.choice (user_agents)
 headers = {'User-Agent': user_agent}
 
 def redirect(l,wi,urls_vulnerables,threads):
-    
+    print()
     print('--------------------------------')
     print('\033[1;36m Testing REDIRECT parameters:\033[0m') 
     print('--------------------------------')
     print()
     limp=''
     found=0
-
+    p=0
+    total=len(l)
 
     def red_single(line,w):
-     
-       
-     if found == 0:
-         print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
-         sleep(1)
+
+     nonlocal p      
      
      if 'FUZZ' in line:
          line= line.replace('=FUZZ',f'={w}')
@@ -124,8 +121,7 @@ def redirect(l,wi,urls_vulnerables,threads):
               # Advertencia de posible vulnerabilidad de redirección abierta
               found= found + 1
               if found == 1:
-                 urls_vulnerables.append('\n****************** VULNERABLE TO OPENREDIRECT: *********************\n')             
-                 print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')              
+                 urls_vulnerables.append('\n****************** VULNERABLE TO OPENREDIRECT: *********************\n')                          
               print ('\033[1;32m[+]\033[0m ' + resp.url)
               print("\033[1;32mRedirecciones:\033[0m ")
               for resp in req.history:
@@ -134,10 +130,14 @@ def redirect(l,wi,urls_vulnerables,threads):
          if req.status_code in (302,301,307,303):
              new_url=req.headers['location']
              if 'https://' in new_url or 'http://' in new_url or 'javascript:' in new_url:
-                 print('posible redirect vuln Location' + req.url)
-                 found= found + 1         
+                 print('posible redirect vuln Location' + req.url, end='\n')
+                 found= found + 1 
+         p+=1
+         update_progress(p,total)             
                              
      except:
+         p+=1
+         update_progress(p,total)
          pass
      
      line= line.replace('%20',' ')
@@ -152,15 +152,15 @@ def redirect(l,wi,urls_vulnerables,threads):
      if len(req.history) >= 2:
          found= found + 1
          if found == 1:
-                 urls_vulnerables.append('\n****************** VULNERABLE TO OPENREDIRECT: *********************\n')             
-                 print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
-         print ('\033[1;32m[+]\033[0m ' + lu)
+                 urls_vulnerables.append('\n****************** VULNERABLE TO OPENREDIRECT: *********************\n')                           
+         print ('\033[1;32m[+]\033[0m ' + req.url, end='\n=')
          print("\033[1;32mRedirecciones:\033[0m ")
          for resp in req.history:
              print(f"\t{resp.status_code}: {resp.url}")
-
          urls_vulnerables.append(lu)
     except:
+       p+=1
+       update_progress(p,total)
        pass 
 
 
@@ -172,19 +172,14 @@ def redirect(l,wi,urls_vulnerables,threads):
              for line in l:
                  for w in wi:
                      executor.submit(red_single,line,w) 
-                     if found == 0:
-                         print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")  
-                         sleep(1)
-
-   
-   
+  
     if found >= 1:
      print()   
-     print (f'\033[1;32m[+] Found [{found}] REDIRECT parameter/s"\033[0m')
+     print (Cursor.BACK(50) + Cursor.UP(1) +f'\033[1;32m[+] Found [{found}] REDIRECT parameter/s"\033[0m')
     else:
-     print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')   
-     print("\033[1;31m[-] No results found\033[0m")
-     print()
+     print (Cursor.BACK(50) + Cursor.UP(1) + '      '*80)        
+     print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;31m[-] No results found\033[0m")
+     print()    
 
 def redirect_params(l,params,threads):
     print()
