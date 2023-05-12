@@ -5,7 +5,7 @@
 
 Neluxmatizer is a tool for pentesters to scan vulnerabilities which within the scan are:
 
-hsts, cors and clickjacking headers, and finally scan and fuzzing xss,ssrf,ssti,rce,openredirect, lfi and sql parameters with simple payloads for get fast results. 
+hsts, cors and clickjacking headers, and finally scan and fuzzing xss,ssrf,ssti,rce,openredirect,crlf,xxe lfi and sql parameters with simple payloads for get fast results. 
 
 Or search parameters to use other tool:
 
