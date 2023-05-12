@@ -28,7 +28,7 @@ print("\033[1;36m"+'''
     @@@@    @@@@@ @@@@        @@@@      @@@@    @@@   @@   @@   
     @@@@     @@@@ @@@@@@@@@@  @@@@@@@@  @@@@@@@@@@@ @@@@   @@@@ 
 
-                                 by Marcos Suarez for pentesters v4.1.0
+                                 by Marcos Suarez for pentesters v5.0
 
 '''+ '\033[0;m')
 
@@ -44,15 +44,15 @@ parser.add_argument("-a","--all",
                     dest="all",
                     help="Check URL all vulnerabilities.",
                     action= 'store_true' )                    
-parser.add_argument("--cors",
+parser.add_argument("-cors",
                     dest="cors",
                     help="Check Cors vulnerability.",
                     action= 'store_true' )
-parser.add_argument("--hsts",
-                    dest="hsts",
-                    help="Check hsts header vulnerability.",
+parser.add_argument("-v",
+                    dest="version",
+                    help="Check version.",
                     action= 'store_true' )
-parser.add_argument("--click",
+parser.add_argument("-click",
                     dest="click",
                     help="Check Clickjacking vulnerability.",
                     action= 'store_true' )
@@ -68,39 +68,47 @@ parser.add_argument("-t",
                     dest="threads",
                     help="threads",
                     action= 'store' )
-parser.add_argument("--xss",
+parser.add_argument("-xss",
                     dest="xss",
                     help="Check XSS vulnerability.",
                     action= 'store_true' )
-parser.add_argument("--lfi",
+parser.add_argument("-xxe",
+                    dest="xxe",
+                    help="Check XXE vulnerability.",
+                    action= 'store_true' )
+parser.add_argument("-lfi",
                     dest="lfi",
                     help="Check LFI vulnerability.",
-                    action= 'store_true' )                    
-parser.add_argument("--sql",
+                    action= 'store_true' )
+parser.add_argument("-crlf",
+                    dest="crlf",
+                    help="Check CRLF vulnerability.",
+                    action= 'store_true' )                     
+parser.add_argument("-sql",
                     dest="sql",
                     help="Check SQL vulnerability.",
                     action= 'store_true' )
-parser.add_argument("--idor",
+parser.add_argument("-idor",
                     dest="idor",
                     help="Check IDOR parameters.",
                     action= 'store_true' )
-parser.add_argument("--rce",
+parser.add_argument("-rce",
                     dest="rce",
                     help="Check RCE vulnerability.",
                     action= 'store_true' )
-parser.add_argument("--redirect",
+parser.add_argument("-redirect",
                     dest="redirect",
                     help="Check OPENREDIRECT vulnerability.",
                     action= 'store_true' )                                                                                
-parser.add_argument("--ssrf",
+parser.add_argument("-ssrf",
                     dest="ssrf",
                     help="Check SSRF vulnerability.",
                     action= 'store_true' )
-parser.add_argument("--ssti",
+parser.add_argument("-ssti",
                     dest="ssti",
                     help="Check SSTI vulnerability.",
                     action= 'store_true' )                  
-parser.add_argument("--only-params","-op",
+parser.add_argument("-only-params","-op",
                      dest="params", 
                      help = 'save params for fuzzing')
 parser.add_argument("-o",
@@ -118,15 +126,19 @@ def signal_handler(signal, frame):
     
     
 def selector():
-    signal.signal(signal.SIGINT,signal_handler)
-    output= os.path.join('output','domain.txt')
+    
+    output= os.path.join('output','param.txt')
+    output2= os.path.join('output','urls.txt')
     url = []
     wordlist=[]
     urls_vulnerables=[]
     urls_params=[]
     threads=30
     fname= os.path.join('output','urls_vulnerables.txt')
-    c,cl,h,x,l,s,i,r,rc,sr,sst,o,op=False,False,False,False,False,False,False,False,False,False,False,False,False 
+    c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,o,op=False,False,False,False,False,False,False,False,False,False,False,False,False,False 
+    if args.version:
+         print('version 5.0')
+         print('Check the current version at https://github.com/Nelux1/Neluxmatizer.git')
     if args.url:
          url.append(str(args.url))                
     if args.usedlist:
@@ -136,12 +148,12 @@ def selector():
                  if q == "" or q.startswith("#"):
                      continue
                  url.append(q)                  
-    if args.hsts: 
-         h=True
     if args.cors:
          c=True
     if args.click:
          cl=True
+    if args.crlf:
+         cr=True  
     if args.idor:
          i=True
     if args.rce:
@@ -151,9 +163,11 @@ def selector():
     if args.ssrf:
          sr=True 
     if args.ssti:
-         sst=True                        
+         sst=True
+    if args.xxe:
+         xe=True                             
     if args.all:
-         c,cl,h,x,l,s,i,r,rc,sr,sst=True,True,True,True,True,True,True,True,True,True,True 
+         c,cl,cr,x,xe,l,s,i,r,rc,sr,sst=True,True,True,True,True,True,True,True,True,True,True,True 
     if args.params:
          c,cl,h=False,False,False
          fname= os.path.join(args.params)
@@ -168,7 +182,7 @@ def selector():
     if args.lfi and not args.word:
          l=True                                       
     if not args.word:        
-      all_list(url,c,cl,h,x,l,s,i,r,rc,sr,sst,output,fname,o,urls_vulnerables,op,urls_params,threads)        
+      all_list(url,c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,output,output2,fname,o,urls_vulnerables,op,urls_params,threads)        
     if args.word:
          with open(args.word, "r") as f:
              for i in f.readlines():
@@ -203,7 +217,12 @@ def selector():
                  if args.output:
                      if save:
                          save_output(urls_vulnerables,fname,l)
-
+     
+    if os.path.exists(output):
+        os.remove(output)
+    if os.path.exists(output2):
+        os.remove(output2)
+        
      
 if len(sys.argv) <= 1:
     print('\n%s -h for help.' % (sys.argv[0]))
@@ -212,6 +231,7 @@ if len(sys.argv) <= 1:
 
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGINT,signal_handler)
     try:
         selector()
     except KeyboardInterrupt:
