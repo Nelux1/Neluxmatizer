@@ -1,8 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import requests
 from urllib import parse as urlparse
-import http.cookiejar
-import sys,os
+from parametizer.progress import update_progress
 import random
 from urllib.request import urlopen
 from urllib.error import URLError, HTTPError
@@ -76,18 +75,15 @@ def sqli(l,wi,urls_vulnerables,threads):
     print()
     limp=''
     found=0
-    
+    p=0
+    total=len(l)
     def sql_single(linea,w):
-      nonlocal found
-
-      if found == 0:
-         print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
-         sleep(1)
-
+      nonlocal found,p
+      
       if 'FUZZ' in linea:
          linea= linea.replace('=FUZZ',f'={w}')
       elif '=' and not 'FUZZ' in linea:
-        linea= linea.replace('=',f'={w}')                         
+         linea= linea.replace('=',f'={w}')                         
       try:
          req= requests.get(linea,headers=headers,timeout=50)
          body= str(urlopen(linea).read()).lower()
@@ -96,10 +92,13 @@ def sqli(l,wi,urls_vulnerables,threads):
                  found= found + 1
                  if found == 1:
                      urls_vulnerables.append('\n****************** PARAMETERS TO SQL: *********************\n')
-                     print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
-                 print('\033[1;32m[+]\033[0m ' + linea)
+                 print('\033[1;32m[+]\033[0m ' + req.url)
                  urls_vulnerables.append(linea)
+         p+=1
+         update_progress(p,total)       
       except:
+         p+=1
+         update_progress(p,total)
          pass
       linea= linea.replace(f'={w}','=FUZZ')
          
@@ -109,18 +108,16 @@ def sqli(l,wi,urls_vulnerables,threads):
              if li in linea:
                  for w in wi:
                      executor.submit(sql_single,linea,w)
-                     if found == 0:
-                         print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")  
-                         sleep(1)
-
+                     
     if found >= 1:
-         print()
-         print (f'\033[1;32m[+] Found [{found}] SQL parameter/s"\033[0m')
-         print()      
+     print()
+     print (Cursor.BACK(50) + Cursor.UP(1) +f'\033[1;32m[+] Found [{found}] SQL parameter/s"\033[0m')
+     print()      
     else:
-         print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
-         print("\033[1;31m[-] No results found\033[0m")
-         print()        
+     print (Cursor.BACK(50) + Cursor.UP(1) + '      '*80)        
+     print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;31m[-] No results found\033[0m")
+     print()           
+
 
 def sqli_params(l,params,threads):
     print()
