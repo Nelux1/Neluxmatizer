@@ -1,8 +1,8 @@
 from concurrent.futures import ThreadPoolExecutor
 import requests
+from bs4 import BeautifulSoup
 from urllib import parse as urlparse
-import http.cookiejar
-import sys,os
+from parametizer.progress import update_progress
 import random
 from urllib.request import urlopen
 from urllib.error import URLError, HTTPError
@@ -67,15 +67,13 @@ def rce(l,wi,urls_vulnerables,threads):
     print('---------------------')
     print()
     limp=''
+    p=0
+    total=len(l)
     found=0
 
     def rce_single(line,w):
-     nonlocal found
+     nonlocal found,p
                      
-     if found == 0:
-         print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
-         sleep(1)
-
      if 'FUZZ' in line:
          line= line.replace('=FUZZ',f'={w}')
          line= line.replace(' ','%20')
@@ -84,15 +82,18 @@ def rce(l,wi,urls_vulnerables,threads):
          line= line.replace(' ','%20')                         
      try:
          req= requests.get(line,headers=headers,timeout=50)
-         body= req.text
-         if 'root:x' in body or 'inet' in body or 'host name' in body or "IPv4" in body:
+         body= BeautifulSoup(req.text,"html.parser")
+         if 'root:x' in body.get_text() or 'inet' in body.get_text() or 'host name' in body.get_text() or "IPv4" in body.get_text():
              found= found + 1
              if found == 1:
                  urls_vulnerables.append('\n****************** VULNERABLE TO RCE: *********************\n')             
-                 print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
-             print ('\033[1;32m[+]\033[0m ' + line)
-             urls_vulnerables.append(line)  
+             print ('\033[1;32m[+]\033[0m ' + req.url, end='\n')
+             urls_vulnerables.append(line) 
+         p+=1
+         update_progress(p,total)     
      except:
+         p+=1
+         update_progress(p,total)
          pass
      
      line= line.replace('%20',' ')
@@ -106,18 +107,15 @@ def rce(l,wi,urls_vulnerables,threads):
                  for line in l:
                      for w in wi:
                          executor.submit(rce_single,line,w)
-                         if found == 0:
-                             print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")  
-                             sleep(1)
 
 
     if found >= 1:
      print()   
-     print (f'\033[1;32m[+] Found [{found}] RCE parameter/s"\033[0m')
+     print (Cursor.BACK(50) + Cursor.UP(1) +f'\033[1;32m[+] Found [{found}] RCE parameter/s"\033[0m')
     else:
-     print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')         
-     print("\033[1;31m[-] No results found\033[0m")
-     print()
+     print (Cursor.BACK(50) + Cursor.UP(1) + '      '*80)        
+     print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;31m[-] No results found\033[0m")
+     print()     
 
 def rce_params(l,params,threads):
     print()
@@ -127,9 +125,9 @@ def rce_params(l,params,threads):
     print()
     found=0
 
+
     def rcep_single(linea,li):
          nonlocal found
-
          if li in linea:
              found= found + 1
              if found == 1:
