@@ -1,9 +1,9 @@
-from cgitb import text
-import mechanize
-import signal
-from bs4 import BeautifulSoup
+from pprint import pprint
+from bs4 import BeautifulSoup as bs
+from urllib.parse import urljoin
 import requests
 from urllib import parse as urlparse
+from parametizer.progress import update_progress
 import http.cookiejar
 import os, sys
 from urllib.request import urlopen, Request
@@ -79,14 +79,13 @@ def xss(l,wordlist,urls_vulnerables,threads):
     print()
     limp=''
     found=0
+    total = len(l)    
+    progress=0
 
     def xss_single(linea,li):
+
+        nonlocal found,progress
         
-        nonlocal found
-        
-        if found == 0:
-         print(Cursor.BACK(50) + Cursor.UP(0) + "\033[46m-_-_-_-_- TESTING -_-_-_-_-\033[0m")
-         sleep(2)
         
         if 'FUZZ' in linea:
          linea= linea.replace('=FUZZ',f'={li}')
@@ -104,31 +103,62 @@ def xss(l,wordlist,urls_vulnerables,threads):
                  found= found + 1
                  if found == 1:
                      urls_vulnerables.append('\n****************** VULNERABLE TO XSS: *********************\n')
-                     print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')
-                 print ('\033[1;32m[+]\033[0m ' + req.url)
+                 print ('\033[1;32m[+]\033[0m ' + req.url, end='\n')
                  urls_vulnerables.append(linea)
+          progress+=1
+          update_progress(progress, total)           
         except:
+         progress+=1
+         update_progress(progress, total)  
          pass        
         linea= linea.replace('%20',' ')
         linea= linea.replace(f'{li}',limp)
- 
-    
-    with ThreadPoolExecutor(max_workers=threads) as executor:
+
+        
+    with ThreadPoolExecutor(max_workers=threads) as executor:                      
        for linea in l:
           for li in wordlist:
              executor.submit(xss_single,linea,li)
-             if found == 0:
-                 print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;36m_-_-_-_-_   WAIT  _-_-_-_-_\033[0m")  
-                 sleep(2)            
- 
 
-    if found >= 1:
-     print()   
-     print (f'\033[1;32m[+] Found [{found}] results vulnerable to XSS\033[0m')
+    if found >=1:
+     print()
+     print (Cursor.BACK(50) + Cursor.UP(1) + f'\033[1;32m[+] Found [{found}] results vulnerable to XSS\033[0m')
     else:
-     print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')         
-     print("\033[1;31m[-] No results found\033[0m")
+     print (Cursor.BACK(50) + Cursor.UP(1) + '      '*80)        
+     print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;31m[-] No results found\033[0m")
      print()           
+
+
+def xss_forms(l,wordlist,urls_vulnerables):
+        print()
+        print('---------------------')
+        print('\033[1;36m Testing xss in forms: \033[0m') 
+        print('---------------------')
+        print()
+        f=0
+        p=0
+        total = len(l)    
+        try:
+             for linea in l:
+                for li in wordlist:
+                    if scan_xss(linea,li):
+                        f+=1                    
+                        if f == 1:
+                            urls_vulnerables.append('\n****************** VULNERABLE TO XSS FORMS: *********************\n')
+                        urls_vulnerables.append(linea)
+                p+=1
+                update_progress(p, total)                 
+        except:
+            p+=1
+            update_progress(p, total)       
+            pass
+
+        if f >=1:  
+           print (f'\033[1;32m[+] Found [{f}] results vulnerable to XSS\033[0m')
+        else:
+            print (Cursor.BACK(50) + Cursor.UP(1) + '      '*80)        
+            print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;31m[-] No results found\033[0m")
+            print()           
      
 def xss_params(l,params,threads):
     print()
@@ -159,4 +189,83 @@ def xss_params(l,params,threads):
     else:
      print("\033[1;31m[-] No results found\033[0m")
      print() 
-
+       
+def get_all_forms(url):
+       
+     """Given a `url`, it returns all forms from the HTML content"""    
+     soup = bs(requests.get(url).content, "html.parser")
+     return soup.find_all("form")
+    
+def get_form_details(form):
+        """
+        This function extracts all possible useful information about an HTML `form`
+        """
+        details = {}
+        # get the form action (target url)
+        action = form.attrs.get("action", "").lower()
+        # get the form method (POST, GET, etc.)
+        method = form.attrs.get("method", "get").lower()
+        # get all the input details such as type and name
+        inputs = []
+        for input_tag in form.find_all("input"):
+            input_type = input_tag.attrs.get("type", "text")
+            input_name = input_tag.attrs.get("name")
+            inputs.append({"type": input_type, "name": input_name})
+        # put everything to the resulting dictionary
+        details["action"] = action
+        details["method"] = method
+        details["inputs"] = inputs
+        return details
+    
+def submit_form(form_details, url, value):
+        """
+        Submits a form given in `form_details`
+        Params:
+            form_details (list): a dictionary that contain form information
+            url (str): the original URL that contain that form
+            value (str): this will be replaced to all text and search inputs
+        Returns the HTTP Response after form submission
+        """
+        # construct the full URL (if the url provided in action is relative)
+        target_url = urljoin(url, form_details["action"])
+        # get the inputs
+        inputs = form_details["inputs"]
+        data = {}
+        for input in inputs:
+            # replace all text and search values with `value`
+            if input["type"] == "text" or input["type"] == "search":
+                input["value"] = value
+            input_name = input.get("name")
+            input_value = input.get("value")
+            if input_name and input_value:
+                # if input name and value are not None, 
+                # then add them to the data of form submission
+                data[input_name] = input_value
+        if form_details["method"] == "post":
+            return requests.post(target_url, data=data)
+        else:
+            # GET request
+            return requests.get(target_url, params=data)
+        
+def scan_xss(url,payload):
+        """
+        Given a `url`, it prints all XSS vulnerable forms and 
+        returns True if any is vulnerable, False otherwise
+        """
+        # get all the forms from the URL
+        forms = get_all_forms(url)
+        js_script = payload
+        # returning value
+        is_vulnerable = False
+        # iterate over all forms
+        for form in forms:
+            form_details = get_form_details(form)
+            content = submit_form(form_details, url, js_script).content.decode()
+            if js_script in content:
+                print(f"\033[1;32m[+]\033[0m XSS Detected on {url}")
+                print(f"\x1b[1;35m[*]\033[0;m Form details:")
+                pprint(form_details)
+                print()
+                is_vulnerable = True
+                # won't break because we want to print available vulnerable forms
+        return is_vulnerable
