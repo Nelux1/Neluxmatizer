@@ -28,6 +28,7 @@ def save_func(final_urls , outfile , domain):
             f.write(i+"\n")
 
 def save_output(urls_vulnerables,nfile,domain_vuln):
+
     if nfile:
         if "/" in nfile:
             filename = f'{nfile}'
@@ -45,12 +46,9 @@ def save_output(urls_vulnerables,nfile,domain_vuln):
         except OSError as exc: 
             if exc.errno != errno.EEXIST:
                 raise
-
+    
     for i in urls_vulnerables:
         with open(filename, "a" , encoding="utf-8") as f:
-            f.write(i+"\n")
+         if i.strip():
+             f.write(i+"\n")
     
-    if "/" in nfile:        
-        print(f"\u001b[32m[+] Output is saved here :\u001b[31m \u001b[36m{nfile}\u001b[31m" )
-    else:
-        print(f"\u001b[32m[+] Output is saved here :\u001b[31m \u001b[36moutput/{nfile}\u001b[31m" )               
