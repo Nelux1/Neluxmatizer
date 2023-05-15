@@ -262,10 +262,13 @@ def scan_xss(url,payload):
             form_details = get_form_details(form)
             content = submit_form(form_details, url, js_script).content.decode()
             if js_script in content:
-                print(f"\033[1;32m[+]\033[0m XSS Detected on {url}")
-                print(f"\x1b[1;35m[*]\033[0;m Form details:")
-                pprint(form_details)
-                print()
-                is_vulnerable = True
-                # won't break because we want to print available vulnerable forms
-        return is_vulnerable
+                if "https://web.archive.org/" in url:
+                    pass
+                else:
+                        print(f"\033[1;32m[+]\033[0m XSS Detected on {url}")
+                        print(f"\x1b[1;35m[*]\033[0;m Form details:")
+                        pprint(form_details)
+                        print()
+                        is_vulnerable = True
+                    # won't break because we want to print available vulnerable forms
+        return is_vulnerable    
