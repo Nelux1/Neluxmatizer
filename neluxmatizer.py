@@ -28,7 +28,7 @@ print("\033[1;36m"+'''
     @@@@    @@@@@ @@@@        @@@@      @@@@    @@@   @@   @@   
     @@@@     @@@@ @@@@@@@@@@  @@@@@@@@  @@@@@@@@@@@ @@@@   @@@@ 
 
-                                 by Marcos Suarez for pentesters v5.0
+                                 by Marcos Suarez for pentesters v5.1
 
 '''+ '\033[0;m')
 
@@ -137,7 +137,7 @@ def selector():
     fname= os.path.join('output','urls_vulnerables.txt')
     c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,o,op=False,False,False,False,False,False,False,False,False,False,False,False,False,False 
     if args.version:
-         print('version 5.0')
+         print('version 5.1')
          print('Check the current version at https://github.com/Nelux1/Neluxmatizer.git')
     if args.url:
          url.append(str(args.url))                
