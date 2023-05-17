@@ -52,7 +52,7 @@ def clickjacking(l,vulnerables_urls):
             continue           
         indice+=1
  if f >=1:  
-    print (f'\033[1;32m[+] Found [{f}] results vulnerable to XSS\033[0m')
+    print (f'\033[1;32m[+] Found [{f}] results vulnerable to Clickjacking\033[0m')
  else:
      print (Cursor.BACK(50) + Cursor.UP(1) + '      '*80)        
      print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;31m[-] No results found\033[0m")
