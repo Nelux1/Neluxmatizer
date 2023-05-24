@@ -189,37 +189,18 @@ def selector():
                  i = i.strip()
                  if i == "" or i.startswith("#"):
                      continue
-                 wordlist.append(i)
-             for l in url:
-                 uri=[]
-                 print()
-                 print('---------------------')
-                 print('\033[1;32m' +l+':\033[0m')
-                 print('---------------------')
-                 print()        
-                 parametizer(l,output,threads)
-                 try: 
-                     with open(output, "r") as f:
-                         for i in f.readlines():
-                             i = i.strip()
-                             if i == "" or i.startswith("#"):
-                                 continue
-                             uri.append(i)
-                             save=True
-                 except:
-                     save=False               
-                 if args.xss:
-                     x=True                        
-                     all_list(url,c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,output,output2,fname,o,urls_vulnerables,op,urls_params,threads,wordlist)
-                 if args.lfi:
-                     l=True
-                     all_list(url,c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,output,output2,fname,o,urls_vulnerables,op,urls_params,threads,wordlist)              
-                 if args.sql:
-                     s=True
-                     all_list(url,c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,output,output2,fname,o,urls_vulnerables,op,urls_params,threads,wordlist)
-                 if args.output:
-                     if save:
-                          save_output(urls_vulnerables,fname,l)
+                 wordlist.append(i)             
+         if args.xss:
+           x=True                        
+           all_list(url,c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,output,output2,fname,o,urls_vulnerables,op,urls_params,threads,wordlist)
+         if args.lfi:
+           l=True
+           all_list(url,c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,output,output2,fname,o,urls_vulnerables,op,urls_params,threads,wordlist)              
+         if args.sql:
+           s=True
+           all_list(url,c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,output,output2,fname,o,urls_vulnerables,op,urls_params,threads,wordlist)
+         if args.output:
+           save_output(urls_vulnerables,fname,l)
      
     if os.path.exists(output):
         os.remove(output)
