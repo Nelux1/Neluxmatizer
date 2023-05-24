@@ -28,7 +28,7 @@ print("\033[1;36m"+'''
     @@@@    @@@@@ @@@@        @@@@      @@@@    @@@   @@   @@   
     @@@@     @@@@ @@@@@@@@@@  @@@@@@@@  @@@@@@@@@@@ @@@@   @@@@ 
 
-                                 by Marcos Suarez for pentesters v5.1
+                                 by Marcos Suarez for pentesters v5.2
 
 '''+ '\033[0;m')
 
@@ -137,7 +137,7 @@ def selector():
     fname= os.path.join('output','urls_vulnerables.txt')
     c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,o,op=False,False,False,False,False,False,False,False,False,False,False,False,False,False 
     if args.version:
-         print('version 5.1')
+         print('version 5.2')
          print('Check the current version at https://github.com/Nelux1/Neluxmatizer.git')
     if args.url:
          url.append(str(args.url))                
@@ -182,7 +182,7 @@ def selector():
     if args.lfi and not args.word:
          l=True                                       
     if not args.word:        
-      all_list(url,c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,output,output2,fname,o,urls_vulnerables,op,urls_params,threads)        
+      all_list(url,c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,output,output2,fname,o,urls_vulnerables,op,urls_params,threads,wordlist)        
     if args.word:
          with open(args.word, "r") as f:
              for i in f.readlines():
@@ -208,15 +208,18 @@ def selector():
                              save=True
                  except:
                      save=False               
-                 if args.xss:                        
-                     xss(uri,wordlist,urls_vulnerables,threads)
+                 if args.xss:
+                     x=True                        
+                     all_list(url,c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,output,output2,fname,o,urls_vulnerables,op,urls_params,threads,wordlist)
                  if args.lfi:
-                     lfi(uri,wordlist,urls_vulnerables,threads)                 
+                     l=True
+                     all_list(url,c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,output,output2,fname,o,urls_vulnerables,op,urls_params,threads,wordlist)              
                  if args.sql:
-                     sqli(uri,wordlist,urls_vulnerables,threads)
+                     s=True
+                     all_list(url,c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,output,output2,fname,o,urls_vulnerables,op,urls_params,threads,wordlist)
                  if args.output:
                      if save:
-                         save_output(urls_vulnerables,fname,l)
+                          save_output(urls_vulnerables,fname,l)
      
     if os.path.exists(output):
         os.remove(output)
@@ -235,5 +238,5 @@ if __name__ == "__main__":
     try:
         selector()
     except KeyboardInterrupt:
-        pass
+        exit(0)
 
