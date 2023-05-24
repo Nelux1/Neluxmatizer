@@ -19,7 +19,7 @@ from scanners.scan_ssrf import ssrf, ssrf_params
 from scanners.scan_ssti import ssti, ssti_params
 import signal
 
-def all_list(l,c,cl,cr,x,xe,lf,s,i,r,rc,sr,sst,output,output2,fname,o,vulnerables_urls,op,params,threads):   
+def all_list(l,c,cl,cr,x,xe,lf,s,i,r,rc,sr,sst,output,output2,fname,o,vulnerables_urls,op,params,threads,word_list):   
  
  indice=0
  while indice < len(l):
@@ -62,8 +62,10 @@ def all_list(l,c,cl,cr,x,xe,lf,s,i,r,rc,sr,sst,output,output2,fname,o,vulnerable
          if c:           
              cors(uri2,vulnerables_urls)
          if x:
-             wordlist=['"><script>confirm(1)</script>','<h1>NELUXMATIZER</h1>']
-
+             if len(word_list) == 0:
+                 wordlist=['"><script>confirm(1)</script>','<h1>NELUXMATIZER</h1>']
+             else:
+                 wordlist=word_list
              if op:
                      xss_params(uri,params,threads)
              else:                                             
@@ -77,7 +79,10 @@ def all_list(l,c,cl,cr,x,xe,lf,s,i,r,rc,sr,sst,output,output2,fname,o,vulnerable
               xxe(uri2,vulnerables_urls,threads)              
 
          if s:
-             wordlist=["%27"]
+             if len(word_list) == 0:
+                 wordlist=["%27"]
+             else:
+                 wordlist=word_list                        
              if op:
                      sqli_params(uri,params,threads)
              else:                                     
@@ -123,7 +128,10 @@ def all_list(l,c,cl,cr,x,xe,lf,s,i,r,rc,sr,sst,output,output2,fname,o,vulnerable
                      ssrf(uri,wordlist,vulnerables_urls,threads)           
              
          if lf:
-             wordlist=['../../../../../../../../../../../../../../../../../../../../../../etc/passwd']   
+             if len(word_list) == 0:
+                 wordlist=['../../../../../../../../../../../../../../../../../../../../../../etc/passwd']
+             else:
+                 wordlist=word_list                                
              if op:
                      lfi_params(uri,params,threads)
              else:
