@@ -1,3 +1,4 @@
+
 from parametizer.params import parametizer,parametizer2, parametizer3
 from scanners.scan_crlf import crlf    
 from scanners.scan_xss import xss,xss_forms, xss_params
@@ -96,7 +97,7 @@ def all_list(l,c,cl,cr,x,xe,lf,s,i,r,rc,sr,sst,output,output2,fname,o,vulnerable
              print()        
              print('\033[1;33mSearch idor parameters:\033[0m')
              print()        
-             idor(uri,wordlist,vulnerables_urls,threads)           
+             idor(uri,params,threads)           
     
          if rc:
              wordlist=['| ipconfig /all','; ipconfig /all','& ipconfig /all','| ifconfig',
@@ -107,7 +108,8 @@ def all_list(l,c,cl,cr,x,xe,lf,s,i,r,rc,sr,sst,output,output2,fname,o,vulnerable
              else:                                             
                      print()        
                      print('\033[1;33mTest rce for default payload:\033[0m')       
-                     rce(uri,wordlist,vulnerables_urls,threads)           
+                     rce(uri,wordlist,vulnerables_urls,threads)  
+
          if r: 
              wordlist=['////google.com/','https:///google.com/','/https:google.com','<>javascript:alert(1);','http:///////////google.com','javascript:alert(1)']
              if op:
