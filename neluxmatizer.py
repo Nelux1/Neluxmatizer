@@ -28,7 +28,7 @@ print("\033[1;36m"+'''
     @@@@    @@@@@ @@@@        @@@@      @@@@    @@@   @@   @@   
     @@@@     @@@@ @@@@@@@@@@  @@@@@@@@  @@@@@@@@@@@ @@@@   @@@@ 
 
-                                 by Marcos Suarez for pentesters v5.2
+                                 by Marcos Suarez for pentesters v5.3
 
 '''+ '\033[0;m')
 
@@ -70,7 +70,7 @@ parser.add_argument("-t",
                     action= 'store' )
 parser.add_argument("-xss",
                     dest="xss",
-                    help="Check XSS vulnerability.",
+                    help="Check XSS vulnerability or params.",
                     action= 'store_true' )
 parser.add_argument("-xxe",
                     dest="xxe",
@@ -78,7 +78,7 @@ parser.add_argument("-xxe",
                     action= 'store_true' )
 parser.add_argument("-lfi",
                     dest="lfi",
-                    help="Check LFI vulnerability.",
+                    help="Check LFI vulnerability or params.",
                     action= 'store_true' )
 parser.add_argument("-crlf",
                     dest="crlf",
@@ -86,27 +86,27 @@ parser.add_argument("-crlf",
                     action= 'store_true' )                     
 parser.add_argument("-sql",
                     dest="sql",
-                    help="Check SQL vulnerability.",
+                    help="Check SQL vulnerability or params.",
                     action= 'store_true' )
 parser.add_argument("-idor",
                     dest="idor",
-                    help="Check IDOR parameters.",
+                    help="Check IDOR params.",
                     action= 'store_true' )
 parser.add_argument("-rce",
                     dest="rce",
-                    help="Check RCE vulnerability.",
+                    help="Check RCE vulnerability or params.",
                     action= 'store_true' )
 parser.add_argument("-redirect",
                     dest="redirect",
-                    help="Check OPENREDIRECT vulnerability.",
+                    help="Check OPENREDIRECT vulnerability or params.",
                     action= 'store_true' )                                                                                
 parser.add_argument("-ssrf",
                     dest="ssrf",
-                    help="Check SSRF vulnerability.",
+                    help="Check SSRF vulnerability or params.",
                     action= 'store_true' )
 parser.add_argument("-ssti",
                     dest="ssti",
-                    help="Check SSTI vulnerability.",
+                    help="Check SSTI vulnerability or params.",
                     action= 'store_true' )                  
 parser.add_argument("-only-params","-op",
                      dest="params", 
@@ -137,7 +137,7 @@ def selector():
     fname= os.path.join('output','urls_vulnerables.txt')
     c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,o,op=False,False,False,False,False,False,False,False,False,False,False,False,False,False 
     if args.version:
-         print('version 5.2')
+         print('version 5.3')
          print('Check the current version at https://github.com/Nelux1/Neluxmatizer.git')
     if args.url:
          url.append(str(args.url))                
