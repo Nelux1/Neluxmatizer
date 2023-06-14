@@ -1,10 +1,11 @@
 import requests
 from urllib.error import URLError, HTTPError
+from concurrent.futures import ThreadPoolExecutor
 from parametizer.progress import update_progress
 from colorama import Cursor,init
 init()
 
-def clickjacking(l,vulnerables_urls):
+def clickjacking(l,vulnerables_urls,threads):
  print()
  print('---------------------')
  print('\033[1;36m Testing Clickjacking: \033[0m') 
@@ -14,10 +15,9 @@ def clickjacking(l,vulnerables_urls):
  f=0
  p=0
  total=len(l) 
- while indice < len(l):
-             
-        linea=l[indice]
-
+ 
+ def click_single(line):
+        nonlocal f,p          
         try:
             req=requests.get(linea,timeout=10.0) #Opens the url
             headers=req.headers 
@@ -33,8 +33,8 @@ def clickjacking(l,vulnerables_urls):
         except:
             p+=1
             update_progress(p,total)
-            indice+=1
-            continue    
+            pass    
+ 
         try:
             if 'x-frame-options' not in headers:
                 if 'content-security-policy' not in headers:
@@ -48,9 +48,12 @@ def clickjacking(l,vulnerables_urls):
         except:
             p+=1
             update_progress(p,total)
-            indice+=1
-            continue           
-        indice+=1
+            pass           
+
+ with ThreadPoolExecutor(max_workers=threads) as executor:
+     for linea in l:
+         executor.submit(click_single,linea)
+
  if f >=1:  
     print (f'\033[1;32m[+] Found [{f}] results vulnerable to Clickjacking\033[0m')
  else:
