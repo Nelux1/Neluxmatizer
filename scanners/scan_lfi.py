@@ -44,21 +44,6 @@ wordlist=[
         "conf="
         ]
 
-
-user_agents = [
-                            "Mozilla/5.0 (X11; U; Linux i686; it-IT; rv:1.9.0.2) Gecko/2008092313 Ubuntu/9.25 (jaunty) Firefox/3.8",
-                            "Mozilla/5.0 (X11; Linux i686; rv:2.0b3pre) Gecko/20100731 Firefox/4.0b3pre",
-                            "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-GB; rv:1.8.1.6)",
-                            "Mozilla/5.0 (Macintosh; U; Intel Mac OS X; en)",
-                            "Mozilla/3.01 (Macintosh; PPC)",
-                            "Mozilla/4.0 (compatible; MSIE 5.5; Windows NT 5.9)",  
-                            "Mozilla/5.0 (X11; U; Linux 2.4.2-2 i586; en-US; m18) Gecko/20010131 Netscape6/6.01",  
-                            "Opera/8.00 (Windows NT 5.1; U; en)",  
-                            "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US) AppleWebKit/525.19 (KHTML, like Gecko) Chrome/0.2.153.1 Safari/525.19"
-                          ]
-user_agent = random.choice (user_agents)
-headers = {'User-Agent': user_agent}
-
 def lfi(l,wi,urls_vulnerables,threads):
     print()
     print('---------------------')
@@ -69,7 +54,6 @@ def lfi(l,wi,urls_vulnerables,threads):
     found=0
     p=0
     total=len(l)
-
     def lfi_single(line,w):
      nonlocal found,p
      
@@ -81,31 +65,31 @@ def lfi(l,wi,urls_vulnerables,threads):
          line= line.replace(' ','%20')  
                                 
      try:
-          req= requests.get(line,headers=headers,timeout=50)
+          req= requests.get(line,timeout=50)
           body= str(urlopen(line).read()).lower()
           if 'root:x' in body:
               found= found + 1
               if found == 1:
                  urls_vulnerables.append('\n****************** VULNERABLE TO LFI: *********************\n')             
               print ('\033[1;32m[+]\033[0m ' + req.url, end='\n')
-              urls_vulnerables.append(linea)
+              urls_vulnerables.append(linea)  
           p+=1
-          update_progress(p, total)       
+          update_progress(p, total)         
      except:
          p+=1
          update_progress(p,total)
          pass
+     
      line= line.replace('%20',' ')
      line= line.replace(f'{w}',limp)
 
-    
+      
     with ThreadPoolExecutor(max_workers=threads) as executor:
      for linea in l:   
          for li in wordlist:
              if li in linea:
-                 for line in l:
-                     for w in wi:
-                         executor.submit(lfi_single,line,w)   
+                 for w in wi:
+                         executor.submit(lfi_single,linea,w)   
 
     if found >= 1:
      print()   
