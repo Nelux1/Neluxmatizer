@@ -14,6 +14,7 @@ from scanners.scan_lista import all_list
 from scanners.scan_lfi import lfi
 from scanners.scan_ssti import ssti
 from parametizer.core.save_it import save_output
+from parametizer.interrupt import signal_handler
 from colorama import Back, Fore, Cursor, init
 import time 
 start_time = time.time()
@@ -28,7 +29,7 @@ print("\033[1;36m"+'''
     @@@@    @@@@@ @@@@        @@@@      @@@@    @@@   @@   @@   
     @@@@     @@@@ @@@@@@@@@@  @@@@@@@@  @@@@@@@@@@@ @@@@   @@@@ 
 
-                                 by Marcos Suarez for pentesters v5.3
+                                 by Marcos Suarez for pentesters v6.0
 
 '''+ '\033[0;m')
 
@@ -117,14 +118,7 @@ parser.add_argument("-o",
                                                                               
 args = parser.parse_args()                                                         
 
-
-def signal_handler(signal, frame):
-     print()
-     print(Cursor.BACK(50) + Cursor.UP(0) + '                                                     ')
-     print("\x1b[1;35m"+'NOT CLOSE?'+ '\033[0;m'+ '  ----->  '+ "\x1b[1;31m"+ ' PRESS CTRL+C AGAIN'+ '\033[0;m')
-     sys.exit(0)
-    
-    
+        
 def selector():
     
     output= os.path.join('output','param.txt')
@@ -137,7 +131,7 @@ def selector():
     fname= os.path.join('output','urls_vulnerables.txt')
     c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,o,op=False,False,False,False,False,False,False,False,False,False,False,False,False,False 
     if args.version:
-         print('version 5.3')
+         print('version 6.0')
          print('Check the current version at https://github.com/Nelux1/Neluxmatizer.git')
     if args.url:
          url.append(str(args.url))                
@@ -220,4 +214,5 @@ if __name__ == "__main__":
         selector()
     except KeyboardInterrupt:
         exit(0)
+
 
