@@ -2,12 +2,13 @@ import requests
 from urllib.error import URLError, HTTPError
 from parametizer.progress import update_progress
 from colorama import Cursor,init
+from concurrent.futures import ThreadPoolExecutor
 init()
 
 headers = {"Origin": "https://evil.com"}
 
 
-def cors(l,vulnerables_urls):
+def cors(l,vulnerables_urls,threads):
  print()
  print('---------------------')
  print('\033[1;36m Testing CORS: \033[0m') 
@@ -17,10 +18,10 @@ def cors(l,vulnerables_urls):
  f=0
  p=0
  total=len(l) 
- while indice < len(l):
-             
-        linea=l[indice]
 
+ def cors_single(linea):         
+        
+        nonlocal p,f
         try:
             req=requests.get(linea, headers=headers, timeout=10.0) #Opens the url
         except URLError as e:
@@ -34,8 +35,7 @@ def cors(l,vulnerables_urls):
         except:
              p+=1
              update_progress(p,total)             
-             indice+=1
-             continue                                        
+             pass                                        
         try:
             if 'access-control-allow-origin' in req.headers:
                 if 'https://evil.com' in req.headers:
@@ -50,9 +50,13 @@ def cors(l,vulnerables_urls):
         except:
             p+=1
             update_progress(p,total)
-            indice+=1
-            continue           
-        indice+=1
+            pass           
+        
+ 
+ with ThreadPoolExecutor(max_workers=threads) as executor:
+    for linea in l:
+     executor.submit(cors_single,linea)         
+
  if f >=1:  
     print (f'\033[1;32m[+] Found [{f}] results vulnerable to XSS\033[0m')
  else:
