@@ -1,4 +1,3 @@
-
 from parametizer.params import parametizer,parametizer2, parametizer3
 from scanners.scan_crlf import crlf    
 from scanners.scan_xss import xss,xss_forms, xss_params
@@ -18,11 +17,10 @@ from scanners.scan_redirect import redirect, redirect_params
 from scanners.scan_lfi import lfi, lfi_params
 from scanners.scan_ssrf import ssrf, ssrf_params
 from scanners.scan_ssti import ssti, ssti_params
-import signal
 
 def all_list(l,c,cl,cr,x,xe,lf,s,i,r,rc,sr,sst,output,output2,fname,o,vulnerables_urls,op,params,threads,word_list):   
- 
  indice=0
+ 
  while indice < len(l):
      
      linea=l[indice]
@@ -33,35 +31,38 @@ def all_list(l,c,cl,cr,x,xe,lf,s,i,r,rc,sr,sst,output,output2,fname,o,vulnerable
      print('-'*len(linea) + '-'* len(menssaje) + '--')
      print()
      try:
-         try: 
-                uri=[]
-                uri2=[]
-                uri.append(linea)
-                uri2.append(linea)
-                print('\033[1;33mSearch endpoints and parameters:\n\033[0m')
-                parametizer(linea,output,threads)
-                with open(output, "r") as f:
-                                    for q in f.readlines():
-                                        q = q.strip()
-                                        if q == "" or q.startswith("#"):
-                                            pass
-                                        uri.append(q)
-                parametizer3(linea,output2,threads)
-                with open(output2, "r") as ff:
-                                    for qq in ff.readlines():
-                                        qq = qq.strip()
-                                        if qq == "" or qq.startswith("#"):
-                                            pass
-                                        uri2.append(qq)                                                                                                                               
-                print(f"\033[1;32m[+] Total urls found : {(len(uri)-1)+len(uri2)}\033[1;31m")
+          
+         uri=[]
+         uri2=[]
+         uri.append(linea)
+         uri2.append(linea)
+         print('\033[1;33mSearch endpoints and parameters:\n\033[0m')
+         parametizer(linea,output,threads)
+         try:
+             with open(output, "r") as f:
+                 for q in f.readlines():
+                     q = q.strip()
+                     if q == "" or q.startswith("#"):
+                         pass
+                     uri.append(q)
          except:
-             #indice+=1
-             #continue 
-             pass  
+             pass
+         parametizer3(linea,output2,threads)
+         try:
+             with open(output2, "r") as ff:
+                 for qq in ff.readlines():
+                     qq = qq.strip()
+                     if qq == "" or qq.startswith("#"):
+                         pass
+                     uri2.append(qq)                                                                                                                               
+         except:
+                 pass
+         print(f"\033[1;32m[+] Total urls found : {(len(uri)-1)+len(uri2)}\033[1;31m")
+
          if cl:    
-             clickjacking(uri2,vulnerables_urls)
+             clickjacking(uri2,vulnerables_urls,threads)
          if c:           
-             cors(uri2,vulnerables_urls)
+             cors(uri2,vulnerables_urls,threads)
          if x:
              if len(word_list) == 0:
                  wordlist=['"><script>confirm(1)</script>','<h1>NELUXMATIZER</h1>']
@@ -85,7 +86,7 @@ def all_list(l,c,cl,cr,x,xe,lf,s,i,r,rc,sr,sst,output,output2,fname,o,vulnerable
              else:
                  wordlist=word_list                        
              if op:
-                     sqli_params(uri,params,threads)
+                     sqli_params(uri2,params,threads)
              else:                                     
                      print()        
                      print('\033[1;33mTest sqli for default payload:\033[0m')
@@ -162,10 +163,9 @@ def all_list(l,c,cl,cr,x,xe,lf,s,i,r,rc,sr,sst,output,output2,fname,o,vulnerable
      except:
          print()
          print("\033[1;36m"+" CLOSE PROGRAM " + '\033[0;m')
-         indice=len(l)
-         pass      
-           
-      
+         indice=len(l)+1
+         pass     
+                 
      if o:
          save_output(vulnerables_urls,fname,linea)
          if "/" in fname:        
@@ -179,7 +179,9 @@ def all_list(l,c,cl,cr,x,xe,lf,s,i,r,rc,sr,sst,output,output2,fname,o,vulnerable
          else:
                print(f"\u001b[32m[+] Output is saved here :\u001b[31m \u001b[36moutput/{fname}\u001b[31m" )
     
-
      indice+= 1
+     
+
+
 
 
