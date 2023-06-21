@@ -101,9 +101,8 @@ def ssti(l,wi,urls_vulnerables,threads):
      for linea in l:   
          for li in wordlist:
              if li in linea:
-                 for line in l:
                       for w in wi:    
-                         executor.submit(ssti_single,line,w)
+                         executor.submit(ssti_single,linea,w)
  
     if found >= 1:
      print()   
