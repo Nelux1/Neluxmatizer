@@ -87,10 +87,10 @@ def ssti(l,wi,urls_vulnerables,threads):
                  urls_vulnerables.append('\n****************** VULNERABLE TO SSTI: *********************\n')
              print ('\033[1;32m[+]\033[0m ' + req.url)
              urls_vulnerables.append(linea)
-         p+=1
+         p+=1 / len(wi)
          update_progress(p,total)      
      except:
-         p+=1
+         p+=1 / len(wi)
          update_progress(p,total)
          pass
      
