@@ -89,10 +89,10 @@ def rce(l,wi,urls_vulnerables,threads):
                  urls_vulnerables.append('\n****************** VULNERABLE TO RCE: *********************\n')             
              print ('\033[1;32m[+]\033[0m ' + req.url, end='\n')
              urls_vulnerables.append(line) 
-         p+=1
+         p+=1  / len(wi)
          update_progress(p,total)     
      except:
-         p+=1
+         p+=1  / len(wi)
          update_progress(p,total)
          pass
      
