@@ -132,11 +132,11 @@ def redirect(l,wi,urls_vulnerables,threads):
              if 'https://' in new_url or 'http://' in new_url or 'javascript:' in new_url:
                  print('posible redirect vuln Location' + req.url, end='\n')
                  found= found + 1 
-         p+=1
+         p+=1 / len(wi)
          update_progress(p,total)             
                              
      except:
-         p+=1
+         p+=1 / len(wi)
          update_progress(p,total)
          pass
      
