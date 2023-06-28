@@ -57,7 +57,7 @@ def crlf(url,urls_vulnerables,threads):
                  print (Cursor.BACK(50) + Cursor.UP(1) + '                                 ')          
          urls_vulnerables.append(full_url)
          print(f"\033[1;32m[+]\033[0m Vulnerable URL: {response.url}", end='\n')
-     p+=1
+     p+=1 / len(payloads)
      update_progress(p, total)
 
     with ThreadPoolExecutor(max_workers=threads) as executor:                      
