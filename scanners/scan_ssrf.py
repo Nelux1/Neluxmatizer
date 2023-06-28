@@ -120,10 +120,10 @@ def ssrf(l,wi,urls_vulnerables,threads):
                  urls_vulnerables.append('\n****************** VULNERABLE TO SSRF: *********************\n')             
              print ('\033[1;32m[+]\033[0m ' + req.url, end='\n=')
              urls_vulnerables.append(linea)
-          p+=1 
+          p+=1 / len(wi)
           update_progress(p,total)     
      except:
-         p+=1
+         p+=1 / len(wi)
          update_progress(p,total)
          pass
      line= line.replace('%20',' ')
