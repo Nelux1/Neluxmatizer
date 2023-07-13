@@ -16,7 +16,7 @@ def clickjacking(l,vulnerables_urls,threads):
  p=0
  total=len(l) 
  
- def click_single(line):
+ def click_single(linea):
         nonlocal f,p          
         try:
             req=requests.get(linea,timeout=10.0) #Opens the url
