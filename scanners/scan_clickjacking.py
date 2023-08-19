@@ -38,14 +38,14 @@ def clickjacking(l,vulnerables_urls,threads):
         try:
             if 'x-frame-options' not in headers:
                 if 'content-security-policy' not in headers:
-                    if 'web.archive' in req.url:
+                    if "https://web.archive.org" in req.url:
                         pass
-                    else: 
-                     print ('\033[1;32m[+]\033[0m ' + req.url)
-                     f+=1
-                     if f == 1:
+                    else:
+                        print ('\033[1;32m[+]\033[0m ' + req.url)
+                        f+=1
+                        if f == 1:
                          vulnerables_urls.append('\n****************** VULNERABLE TO CLICKJACKING: *********************\n')
-                     vulnerables_urls.append(linea) 
+                        vulnerables_urls.append(linea) 
             p+=1
             update_progress(p,total)
         except:
