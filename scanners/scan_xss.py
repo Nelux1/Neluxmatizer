@@ -105,10 +105,10 @@ def xss(l,wordlist,urls_vulnerables,threads):
                      urls_vulnerables.append('\n****************** VULNERABLE TO XSS: *********************\n')
                  print ('\033[1;32m[+]\033[0m ' + req.url, end='\n')
                  urls_vulnerables.append(linea)
-          progress+=1 / len(wi)
+          progress+=1 / len(wordlist)
           update_progress(progress, total)           
         except:
-         progress+=1 / len(wi)
+         progress+=1 / len(wordlist)
          update_progress(progress, total)  
          pass        
         linea= linea.replace('%20',' ')
