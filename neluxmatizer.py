@@ -7,12 +7,7 @@ from urllib import parse as urlparse
 import sys
 import argparse
 from colorama import Back, Fore, init
-from parametizer.params import parametizer
-from scanners.scan_sqli import sqli
-from scanners.scan_xss import xss
 from scanners.scan_lista import all_list
-from scanners.scan_lfi import lfi
-from scanners.scan_ssti import ssti
 from parametizer.core.save_it import save_output
 from parametizer.interrupt import signal_handler
 from colorama import Back, Fore, Cursor, init
@@ -29,13 +24,16 @@ print("\033[1;36m"+'''
     @@@@    @@@@@ @@@@        @@@@      @@@@    @@@   @@   @@   
     @@@@     @@@@ @@@@@@@@@@  @@@@@@@@  @@@@@@@@@@@ @@@@   @@@@ 
 
-                                 by Marcos Suarez for pentesters v6.6
+                                 by Marcos Suarez for pentesters v6.7
 
 '''+ '\033[0;m')
 
 print("\x1b[1;35m"+'EXIT PROGRAM WITH CRTL+C'+ '\033[0;m')
 print()
+
 parser = argparse.ArgumentParser(prog="neluxmatizer.py")
+def parse_excepciones(value):
+    return value.split(",")
 
 parser.add_argument("-u","--url",
                     dest="url",
@@ -108,7 +106,12 @@ parser.add_argument("-ssrf",
 parser.add_argument("-ssti",
                     dest="ssti",
                     help="Check SSTI vulnerability or params.",
-                    action= 'store_true' )                  
+                    action= 'store_true' )
+parser.add_argument("-E",
+                    dest="exceptions",
+                    help="Except vulneranility to scan",
+                    type=parse_excepciones,
+                    action='store')
 parser.add_argument("-only-params","-op",
                      dest="params", 
                      help = 'save params for fuzzing')
@@ -118,9 +121,9 @@ parser.add_argument("-o",
                                                                               
 args = parser.parse_args()                                                         
 
-        
-def selector():
-    
+
+       
+def selector():    
     output= os.path.join('output','param.txt')
     output2= os.path.join('output','urls.txt')
     url = []
@@ -131,7 +134,7 @@ def selector():
     fname= os.path.join('output','urls_vulnerables.txt')
     c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,o,op=False,False,False,False,False,False,False,False,False,False,False,False,False,False 
     if args.version:
-         print('version 6.6')
+         print('version 6.7')
          print('Check the current version at https://github.com/Nelux1/Neluxmatizer.git')
     if args.url:
          url.append(str(args.url))                
@@ -162,6 +165,31 @@ def selector():
          xe=True                             
     if args.all:
          c,cl,cr,x,xe,l,s,i,r,rc,sr,sst=True,True,True,True,True,True,True,True,True,True,True,True 
+         if args.exceptions:          
+           exceptions = args.exceptions
+           if "cors" in exceptions:
+                    c = False
+                    print(exceptions)
+           if "click" in exceptions :
+                    cl = False
+           if "crlf" in exceptions :
+                    cr = False
+           if "xss" in exceptions:
+                    x = False 
+           if "xxe" in exceptions:
+                    xe = False
+           if "sql" in exceptions:
+                    s = False
+           if "rce" in exceptions:
+                    rc = False
+           if "ssrf" in exceptions:
+                    sr = False
+           if "ssti" in exceptions :
+                   sst = False
+           if "redirect" in exceptions:
+                    r = False
+           if "lfi" in exceptions:
+                    l = False                                                                                                                                                               
     if args.params:
          c,cl,h=False,False,False
          fname= os.path.join(args.params)
