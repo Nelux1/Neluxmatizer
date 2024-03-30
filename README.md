@@ -38,11 +38,11 @@ Scan all vulnerabilities list of url with output:
  
 Scan one vulnerability in url with output:
    
-    ./neluxmatizer.py -u url_to_scan.com --xss -o my_name_output.txt
+    ./neluxmatizer.py -u url_to_scan.com -xss -o my_name_output.txt
  
 Scan one vulnerability in list of with output:
    
-    ./neluxmatizer.py -l list_url_to_scan.txt --xss -o my_name_output.txt
+    ./neluxmatizer.py -l list_url_to_scan.txt -xss -o my_name_output.txt
  
 Important:
 
@@ -53,22 +53,24 @@ Default threads= 30.
 
 Scan url with default payload:
     
-    ./neluxmatizer.py -u url_to_scan.com --xss -o my_name_output.txt
+    ./neluxmatizer.py -u url_to_scan.com -xss -o my_name_output.txt
 
 Scan url list with default payload:
    
-    ./neluxmatizer.py -l list_url_to_scan.txt --xss -o my_name_output.txt
+    ./neluxmatizer.py -l list_url_to_scan.txt -xss -o my_name_output.txt
 
 Scan url with payload:
    
-    ./neluxmatizer.py -u url_to_scan.txt --xss -w my_payloads.txt -o my_name_output.txt
+    ./neluxmatizer.py -u url_to_scan.txt -xss -w my_payloads.txt -o my_name_output.txt
 
 Scan url list with payload:
     
-    ./neluxmatizer.py -l list_url_to_scan.txt --xss -w my_payloads.txt -o my_name_output.txt
+    ./neluxmatizer.py -l list_url_to_scan.txt -xss -w my_payloads.txt -o my_name_output.txt
     
 Scan url list with payload and more threads:  
 
-    ./neluxmatizer.py -l list_url_to_scan.txt --xss -w my_payloads.txt -t 150 -o my_name_output.txt 
+    ./neluxmatizer.py -l list_url_to_scan.txt -xss -w my_payloads.txt -t 150 -o my_name_output.txt 
  
- 
+ Scan all and except scans:
+    
+    ./neluxmatizer.py -l list_url_to_scan.txt -a -E click,ssrf -t 150 -o my_name_output.txt 
