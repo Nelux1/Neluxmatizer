@@ -49,7 +49,7 @@ def crlf(url,urls_vulnerables,threads):
      nonlocal found,p
 
      full_url = url + payload
-     response = requests.get(full_url,headers=headers)
+     response = requests.get(full_url,headers=headers,timeout=100)
      if payload in response.headers:
          found=found +1
          if found == 1:
