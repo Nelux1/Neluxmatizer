@@ -23,36 +23,37 @@ def connector(url):
 
 user_agent = random.choice(user_agent_list)
     
-        
-
-    try:
+try:
         # control request headers in here
             headers = {'User-Agent': user_agent}
             response = requests.get(url,headers=headers ,timeout=100)
             result = response.text
             retry = False
             response.raise_for_status()    
-    except requests.exceptions.ConnectionError as e:
+except requests.exceptions.ConnectionError as e:
             retry = False
             print (f"\u001b[31;1mCan not connect to server. Check your internet connection. (Status code: {response.status_code})\u001b[0m")
-    except requests.exceptions.Timeout as e:
+except requests.exceptions.Timeout as e:
             retry = True
             print (f"\u001b[31;1mOOPS!! Timeout Error. Retrying in 2 seconds. Status code: {response.status_code}\u001b[0m")
             time.sleep(2)
-    except requests.exceptions.HTTPError as err:
+except requests.exceptions.HTTPError as err:
             retry = True
 
             print (f"\u001b[31;1m {err}. Retrying in 5 seconds. Status code: {response.status_code}\u001b[0m")
             time.sleep(5)
             response=True
 
-    except requests.exceptions.RequestException as e:
+except requests.exceptions.RequestException as e:
             retry = True
             print (f"\u001b[31;1m {e} Can not get target information. Status code: {response.status_code}\u001b[0m")
             pass
-    except KeyboardInterrupt as k:
+except KeyboardInterrupt as k:
             retry = False
             print ("\u001b[31;1mInterrupted by user\u001b[0m")
             raise SystemExit(k)
-    finally:
+finally:
             return result, retry
+        
+
+   
