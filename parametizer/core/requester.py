@@ -52,8 +52,7 @@ except KeyboardInterrupt as k:
             retry = False
             print ("\u001b[31;1mInterrupted by user\u001b[0m")
             raise SystemExit(k)
-finally:
-            return result, retry
+return result, retry
         
 
    
