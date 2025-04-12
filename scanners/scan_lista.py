@@ -121,7 +121,7 @@ def all_list(l,c,cl,cr,x,xe,lf,s,i,r,rc,sr,sst,output,output2,fname,o,vulnerable
                          redirect(uri,wordlist,vulnerables_urls,threads)           
              
          if sr:
-             wordlist=['file:///etc/passwd','file://\/\/etc/passwd']   
+             wordlist=[r'file:///etc/passwd',r'file://\/\/etc/passwd']   
              if op:
                      ssrf_params(uri,params,threads)
              else:                                     
