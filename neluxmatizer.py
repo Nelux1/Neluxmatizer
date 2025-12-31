@@ -8,28 +8,32 @@ import sys
 import argparse
 from colorama import Back, Fore, init
 from scanners.scan_lista import all_list
+from parametizer.core.headers import parse_headers
 from parametizer.core.save_it import save_output
 from parametizer.interrupt import signal_handler
 from colorama import Back, Fore, Cursor, init
 import time 
 start_time = time.time()
 init()
+     
+sys.stdout.write("\033[1;36m"+'''
 
-print("\033[1;36m"+'''
+    NNN     NNNN 
+    NNNN    NNNN EEEEEEEEEE LLLL      UUUU    UUU XXXX   XXXX
+    NNN NN  NNNN EEE        LLLL      UUUU    UUU   XX   XX                     
+    NNN  NN NNNN EEEEEEEE   LLLL      UUUU    UUU     XXX     MATIZER
+    NNN    NNNNN EEE        LLLL      UUUU    UUU   XX   XX   
+    NNN     NNNN EEEEEEEEEE LLLLLLLL  UUUUUUUUUUU XXXX   XXXX 
 
-    @@@@     @@@@ 
-    @@@@@    @@@@ @@@@@@@@@@  @@@@      @@@@    @@@ @@@@   @@@@
-    @@@@ @@  @@@@ @@@@        @@@@      @@@@    @@@   @@   @@                     
-    @@@@  @@ @@@@ @@@@@@@@    @@@@      @@@@    @@@     @@@     MATIZER
-    @@@@    @@@@@ @@@@        @@@@      @@@@    @@@   @@   @@   
-    @@@@     @@@@ @@@@@@@@@@  @@@@@@@@  @@@@@@@@@@@ @@@@   @@@@ 
-
-                                 by Marcos Suarez for pentesters v6.7
+                                 by Marcos Suarez for pentesters Turbo v1.0 
 
 '''+ '\033[0;m')
+sys.stdout.flush()
 
-print("\x1b[1;35m"+'EXIT PROGRAM WITH CRTL+C'+ '\033[0;m')
-print()
+sys.stdout.write("\x1b[1;35m"+'EXIT PROGRAM WITH CRTL+C'+ '\033[0;m\n')
+sys.stdout.flush()
+sys.stdout.write('\n')
+sys.stdout.flush()
 
 parser = argparse.ArgumentParser(prog="neluxmatizer.py")
 def parse_excepciones(value):
@@ -87,10 +91,6 @@ parser.add_argument("-sql",
                     dest="sql",
                     help="Check SQL vulnerability or params.",
                     action= 'store_true' )
-parser.add_argument("-idor",
-                    dest="idor",
-                    help="Check IDOR params.",
-                    action= 'store_true' )
 parser.add_argument("-rce",
                     dest="rce",
                     help="Check RCE vulnerability or params.",
@@ -99,10 +99,18 @@ parser.add_argument("-redirect",
                     dest="redirect",
                     help="Check OPENREDIRECT vulnerability or params.",
                     action= 'store_true' )                                                                                
+parser.add_argument("-poc", "--poc",
+                    dest="poc",
+                    help="Generate Proof of Concept (PoC) artifacts (HTML + screenshots)",
+                    action='store_true')
 parser.add_argument("-ssrf",
                     dest="ssrf",
                     help="Check SSRF vulnerability or params.",
                     action= 'store_true' )
+parser.add_argument("-obd","--oob-domain",
+                    dest="oob_domain",
+                    help="Custom OOB domain for SSRF detection (e.g. 84z5c6.oob.red)",
+                    action='store')
 parser.add_argument("-ssti",
                     dest="ssti",
                     help="Check SSTI vulnerability or params.",
@@ -112,12 +120,26 @@ parser.add_argument("-E",
                     help="Except vulneranility to scan",
                     type=parse_excepciones,
                     action='store')
-parser.add_argument("-only-params","-op",
-                     dest="params", 
-                     help = 'save params for fuzzing')
+parser.add_argument("-H", "--headers",
+                    dest="headers",
+                    help="Custom headers for attack requests (format: 'Header1: value1,Header2: value2')",
+                    type=parse_headers,
+                    action='store')
+parser.add_argument("-ra", "--random-agent",
+                    dest="random_agent",
+                    help="Use random User-Agent for all attack requests",
+                    action='store_true')
 parser.add_argument("-o",
                      dest="output", 
                      help = 'Output file name')
+parser.add_argument("-C", "--cookies",
+                    dest="cookies",
+                    help="Cookies de sesión para autenticación continua (format: 'name1=value1; name2=value2')",
+                    action='store')
+parser.add_argument("-A", "--auth",
+                    dest="auth",
+                    help="Authorization Bearer token para autenticación continua (format: 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...')",
+                    action='store')
                                                                               
 args = parser.parse_args()                                                         
 
@@ -125,34 +147,41 @@ args = parser.parse_args()
        
 def selector():    
     output= os.path.join('output','param.txt')
-    output2= os.path.join('output','urls.txt')
     url = []
     wordlist=[]
     urls_vulnerables=[]
-    urls_params=[]
     threads=30
     fname= os.path.join('output','urls_vulnerables.txt')
-    c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,o,op=False,False,False,False,False,False,False,False,False,False,False,False,False,False 
+    c = cl = cr = x = xe = l = s = r = rc = sr = sst = o = False
     if args.version:
-         print('version 6.7')
-         print('Check the current version at https://github.com/Nelux1/Neluxmatizer.git')
+         sys.stdout.write('New version 1.0\n')
+         sys.stdout.flush()
+         sys.stdout.write('Check the current version at https://github.com/Nelux1/Neluxmatizer.git\n')
+         sys.stdout.flush()
     if args.url:
          url.append(str(args.url))                
     if args.usedlist:
-         with open(args.usedlist, "r") as f:
+         # Expandir ruta del usuario y verificar existencia del archivo
+         list_path = os.path.expanduser(args.usedlist)
+         if not os.path.exists(list_path):
+             sys.stdout.write(f'{Fore.RED}[!] Error: No se encontró el archivo: {args.usedlist}{Fore.RESET}\n')
+             sys.stdout.write(f'{Fore.YELLOW}[!] Ruta buscada: {os.path.abspath(list_path)}{Fore.RESET}\n')
+             sys.stdout.flush()
+             sys.exit(1)
+         with open(list_path, "r") as f:
              for q in f.readlines():
                  q = q.strip()
                  if q == "" or q.startswith("#"):
                      continue
-                 url.append(q)                  
+                 url.append(q)
+    if args.threads:
+         threads = int(args.threads)                  
     if args.cors:
          c=True
     if args.click:
          cl=True
     if args.crlf:
          cr=True  
-    if args.idor:
-         i=True
     if args.rce:
          rc=True
     if args.redirect:
@@ -164,12 +193,13 @@ def selector():
     if args.xxe:
          xe=True                             
     if args.all:
-         c,cl,cr,x,xe,l,s,i,r,rc,sr,sst=True,True,True,True,True,True,True,True,True,True,True,True 
+         c = cl = cr = x = xe = l = s = r = rc = sr = sst=True  
          if args.exceptions:          
            exceptions = args.exceptions
            if "cors" in exceptions:
                     c = False
-                    print(exceptions)
+                    sys.stdout.write(f'{exceptions}\n')
+                    sys.stdout.flush()
            if "click" in exceptions :
                     cl = False
            if "crlf" in exceptions :
@@ -189,11 +219,14 @@ def selector():
            if "redirect" in exceptions:
                     r = False
            if "lfi" in exceptions:
-                    l = False                                                                                                                                                               
-    if args.params:
-         c,cl,h=False,False,False
-         fname= os.path.join(args.params)
-         op=True   
+                    l = False
+    # Si NO se especificó -a (all), pero SÍ se especificó -E, activar solo esas vulnerabilidades
+    # NOTA: -E se usa para EXCLUIR cuando se combina con -a, NO para activar individualmente
+    # Para activar individualmente se usan los parámetros específicos: -click, -xss, -sql, etc.
+    elif args.exceptions and not args.all:
+        # Si solo se especificó -E sin -a, NO hacer nada (mantener estado por defecto)
+        # El usuario debe usar parámetros específicos como -click, -xss, etc.
+        pass 
     if args.output:
          fname= os.path.join(args.output)
          o=True
@@ -204,9 +237,16 @@ def selector():
     if args.lfi and not args.word:
          l=True                                       
     if not args.word:        
-      all_list(url,c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,output,output2,fname,o,urls_vulnerables,op,urls_params,threads,wordlist)        
+      all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth)     
     if args.word:
-         with open(args.word, "r") as f:
+         # Expandir ruta del usuario y verificar existencia del archivo
+         wordlist_path = os.path.expanduser(args.word)
+         if not os.path.exists(wordlist_path):
+             sys.stdout.write(f'{Fore.RED}[!] Error: No se encontró el archivo de wordlist: {args.word}{Fore.RESET}\n')
+             sys.stdout.write(f'{Fore.YELLOW}[!] Ruta buscada: {os.path.abspath(wordlist_path)}{Fore.RESET}\n')
+             sys.stdout.flush()
+             sys.exit(1)
+         with open(wordlist_path, "r") as f:
              for i in f.readlines():
                  i = i.strip()
                  if i == "" or i.startswith("#"):
@@ -214,33 +254,34 @@ def selector():
                  wordlist.append(i)             
          if args.xss:
            x=True                        
-           all_list(url,c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,output,output2,fname,o,urls_vulnerables,op,urls_params,threads,wordlist)
+           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth)
          if args.lfi:
            l=True
-           all_list(url,c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,output,output2,fname,o,urls_vulnerables,op,urls_params,threads,wordlist)              
+           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth)     
          if args.sql:
            s=True
-           all_list(url,c,cl,cr,x,xe,l,s,i,r,rc,sr,sst,output,output2,fname,o,urls_vulnerables,op,urls_params,threads,wordlist)
+           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth)
          if args.output:
            save_output(urls_vulnerables,fname,l)
      
     if os.path.exists(output):
         os.remove(output)
-    if os.path.exists(output2):
-        os.remove(output2)
-        
+    
      
 if len(sys.argv) <= 1:
-    print('\n%s -h for help.' % (sys.argv[0]))
+    sys.stdout.write('\n%s -h for help.\n' % (sys.argv[0]))
+    sys.stdout.flush()
     exit(0)
 
 
-
 if __name__ == "__main__":
-    signal.signal(signal.SIGINT,signal_handler)
+    from parametizer.interrupt import setup_interrupt_handler
+    setup_interrupt_handler()
     try:
         selector()
     except KeyboardInterrupt:
+        sys.stdout.write(f"\n{Fore.YELLOW}[!] Programa interrumpido{Fore.RESET}\n")
+        sys.stdout.flush()
         exit(0)
 
 

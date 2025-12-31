@@ -1,212 +1,256 @@
-import mechanize
 import requests
-from urllib import parse as urlparse
-from parametizer.progress import update_progress
-import random
-from urllib.request import urlopen
-from urllib.error import URLError, HTTPError
-from colorama import Back, Fore, Cursor, init
-from time import sleep
+from urllib.parse import urlparse, parse_qs, urlencode
 from concurrent.futures import ThreadPoolExecutor
+import random, sys, os, threading
+from parametizer.progress import update_progress, print_vulnerability
+from parametizer.core.headers import get_headers
+from colorama import Cursor, ansi, init
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from vulnerability_manager import vuln_manager
+
+# Importar el sistema de manejo de bloqueos
+try:
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from core.block_handler import create_safe_request_session
+    BLOCK_HANDLER_AVAILABLE = True
+except ImportError:
+    BLOCK_HANDLER_AVAILABLE = False
 
 init()
 
+def get_base_domain(netloc):
+    parts = netloc.lower().split('.')
+    return '.'.join(parts[-2:]) if len(parts) >= 2 else netloc.lower()
 
-wordlist=[
-        "Lmage_url=",
-        "Open=",
-        "callback=",
-        "cgi-bin/redirect.cgi",
-        "cgi-bin/redirect.cgi?",
-        "checkout=",
-        "checkout_url=",
-        "continue=",
-        "data=",
-        "dest=",
-        "destination=",
-        "dir=",
-        "domain=",
-        "feed=",
-        "file=",
-        "file_name=",
-        "file_url=",
-        "folder=",
-        "folder_url=",
-        "forward=",
-        "from_url=",
-        "go=",
-        "goto=",
-        "host=",
-        "html=",
-        "image_url=",
-        "img_url=",
-        "load_file=",
-        "load_url=",
-        "login?to=",
-        "login_url=",
-        "logout=",
-        "navigation=",
-        "next=",
-        "next_page=",
-        "out=",
-        "page=",
-        "page_url=",
-        "path=",
-        "port=",
-        "redir=",
-        "redirect=",
-        "redirect_to=",
-        "redirect_uri=",
-        "redirect_url=",
-        "reference=",
-        "return=",
-        "returnTo=",
-        "return_path=",
-        "return_to=",
-        "return_url=",
-        "rt=",
-        "rurl=",
-        "show=",
-        "site=",
-        "target=",
-        "to=",
-        "uri=",
-        "url=",
-        "val=",
-        "validate=",
-        "view=",
-        "window="
-]
+def is_redirect_vulnerable(location, base_url, injected_value):
+    if not location:
+        return False
 
-user_agents = [
-                            "Mozilla/5.0 (X11; U; Linux i686; it-IT; rv:1.9.0.2) Gecko/2008092313 Ubuntu/9.25 (jaunty) Firefox/3.8",
-                            "Mozilla/5.0 (X11; Linux i686; rv:2.0b3pre) Gecko/20100731 Firefox/4.0b3pre",
-                            "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-GB; rv:1.8.1.6)",
-                            "Mozilla/5.0 (Macintosh; U; Intel Mac OS X; en)",
-                            "Mozilla/3.01 (Macintosh; PPC)",
-                            "Mozilla/4.0 (compatible; MSIE 5.5; Windows NT 5.9)",  
-                            "Mozilla/5.0 (X11; U; Linux 2.4.2-2 i586; en-US; m18) Gecko/20010131 Netscape6/6.01",  
-                            "Opera/8.00 (Windows NT 5.1; U; en)",  
-                            "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US) AppleWebKit/525.19 (KHTML, like Gecko) Chrome/0.2.153.1 Safari/525.19"
-                          ]
-user_agent = random.choice (user_agents)
-headers = {'User-Agent': user_agent}
+    parsed_location = urlparse(location)
+    parsed_base = urlparse(base_url)
 
-def redirect(l,wi,urls_vulnerables,threads):
+    # Si redirige dentro del mismo dominio base, no es vulnerable
+    if get_base_domain(parsed_location.netloc) == get_base_domain(parsed_base.netloc):
+        return False
+
+    # Si el payload no está reflejado en la redirección, tampoco es relevante
+    if injected_value.lower() not in location.lower():
+        return False
+
+    return True
+
+def redirect(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_agent):
     print()
-    print('--------------------------------')
-    print('\033[1;36m Testing REDIRECT parameters:\033[0m') 
-    print('--------------------------------')
+    sys.stdout.write('\033[1;36m<<<<<<<<<<<<\033[0m  Testing Open Redirect \033[1;36m>>>>>>>>>>>>>\033[0m\n')
     print()
-    limp=''
-    found=0
-    p=0
-    total=len(l)
-
-    def red_single(line,w):
-
-     nonlocal p      
-     
-     if 'FUZZ' in line:
-         line= line.replace('=FUZZ',f'={w}')
-         line= line.replace(' ','%20')
-     elif '=' and not 'FUZZ' in line:
-         line= line.replace('=',f'={w}')
-         line= line.replace(' ','%20') 
-         
-     try:
-         req= requests.get(line,headers=headers,timeout=50,allow_redirects=True)
-
-         if len(req.history) >= 2:
-              # Advertencia de posible vulnerabilidad de redirección abierta
-              found= found + 1
-              if found == 1:
-                 urls_vulnerables.append('\n****************** VULNERABLE TO OPENREDIRECT: *********************\n')                          
-              print ('\033[1;32m[+]\033[0m ' + resp.url)
-              print("\033[1;32mRedirecciones:\033[0m ")
-              for resp in req.history:
-                  print(f"\t{resp.status_code}: {resp.url}")
-              urls_vulnerables.append(linea)
-         if req.status_code in (302,301,307,303):
-             new_url=req.headers['location']
-             if 'https://' in new_url or 'http://' in new_url or 'javascript:' in new_url:
-                 print('posible redirect vuln Location' + req.url, end='\n')
-                 found= found + 1 
-         p+=1 / len(wi)
-         update_progress(p,total)             
-                             
-     except:
-         p+=1 / len(wi)
-         update_progress(p,total)
-         pass
-     
-     line= line.replace('%20',' ')
-     line= line.replace(f'{w}',limp)
+    sys.stdout.flush()
+    total_tasks = len(wordlist) * len(urip)
+    current = 0
+    found = []
+    vulnerable_endpoints = set()
+    lock = threading.Lock()
+    timeout = 10
     
-    try:
+    # Cache para baselines y endpoints vulnerables
+    baseline_cache = {}
+    stdout_lock = threading.Lock()
+
+    def test_get_redirect(url):
+        nonlocal current, found
+        parsed = urlparse(url)
+        base = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        params = parse_qs(parsed.query)
+        headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
+        
+        # Crear sesión segura con manejo de bloqueos si está disponible
+        if BLOCK_HANDLER_AVAILABLE:
+            session = create_safe_request_session(headers)
+        else:
+            session = requests.Session()
+            session.headers.update(headers)
+
+        for param in params:
+            # Verificar si ya se explotó esta combinación específica usando el sistema unificado
+            if vuln_manager.should_skip_url(base, param):
+                continue
+
+            for payload in wordlist:
+                # Cache de baseline para GET
+                baseline_key = f"GET-{base}-{param}"
+                if baseline_key not in baseline_cache:
+                    baseline_params = params.copy()
+                    baseline_params[param] = "TEST123"
+                    baseline_url = f"{base}?{urlencode(baseline_params, doseq=True)}"
+                    try:
+                        baseline_resp = session.get(
+                            baseline_url,
+                            allow_redirects=False,
+                            timeout=5
+                        )
+                        baseline_location = baseline_resp.headers.get("Location", "")
+                        baseline_cache[baseline_key] = baseline_location
+                    except requests.exceptions.Timeout:
+                        baseline_cache[baseline_key] = ""
+                    except requests.exceptions.RequestException:
+                        baseline_cache[baseline_key] = ""
+                    except Exception:
+                        baseline_cache[baseline_key] = ""
+                else:
+                    baseline_location = baseline_cache[baseline_key]
+
+                # Payload
+                mod_params = params.copy()
+                mod_params[param] = payload
+                new_url = f"{base}?{urlencode(mod_params, doseq=True)}"
+                
+                try:
+                    resp = session.get(new_url, allow_redirects=False, timeout=5)
+                    location = resp.headers.get("Location", "")
+
+                    if (
+                        is_redirect_vulnerable(location, base, payload)
+                        and location != baseline_location
+                    ):
+                        # Verificar si ya se explotó esta combinación específica
+                        if not vuln_manager.is_already_exploited(base, param):
+                            # Marcar como explotada
+                            vuln_manager.mark_as_exploited(base, param)
+                            
+                            # Salida sincronizada
+                            with stdout_lock:
+                                print_vulnerability(f"\033[1;32m[GET] [VULNERABLE]\033[0m {new_url} => {location}")
+                            
+                            urls_vulnerables.append(f"{new_url}")
+                            found.append(new_url)
+                            break
+
+                except requests.exceptions.Timeout:
+                    continue
+                except requests.exceptions.RequestException:
+                    continue
+                except Exception:
+                    continue
+                finally:
+                    with lock:
+                        if current < total_tasks:
+                            current += 1    
+                            update_progress(current, total_tasks)
+
+    # Si hay URLs POST, se prueba en POST también (urif)
+    def test_post_redirect(url):
+        nonlocal current, found
+        parsed = urlparse(url)
+        base = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        params = parse_qs(parsed.query)
+        headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
+
+        for param in params:
+            clave = f"{base}|{param}"
+            with lock:
+                if clave in vulnerable_endpoints:
+                    continue
+
+            for payload in wordlist:
+                # Cache de baseline para POST
+                baseline_key = f"POST-{base}-{param}"
+                if baseline_key not in baseline_cache:
+                    baseline_data = params.copy()
+                    baseline_data[param] = "TEST123"
+                    try:
+                        baseline_resp = requests.post(
+                            base,
+                            data=baseline_data,
+                            headers=get_headers(custom_headers, random_agent),
+                            allow_redirects=False,
+                            timeout=5
+                        )
+                        baseline_location = baseline_resp.headers.get("Location", "")
+                        baseline_cache[baseline_key] = baseline_location
+                    except requests.exceptions.Timeout:
+                        baseline_cache[baseline_key] = ""
+                    except requests.exceptions.RequestException:
+                        baseline_cache[baseline_key] = ""
+                    except Exception:
+                        baseline_cache[baseline_key] = ""
+                else:
+                    baseline_location = baseline_cache[baseline_key]
+
+                mod_data = params.copy()
+                mod_data[param] = payload
+                try:
+                    resp = requests.post(
+                        base,
+                        data=mod_data,
+                        headers=headers,
+                        allow_redirects=False,
+                        timeout=5
+                    )
+                    location = resp.headers.get("Location", "")
+
+                    if (
+                        is_redirect_vulnerable(location, base, payload)
+                        and location != baseline_location
+                    ):
+                        # Verificar si ya se explotó esta combinación específica
+                        if not vuln_manager.is_already_exploited(base, param):
+                            # Marcar como explotada
+                            vuln_manager.mark_as_exploited(base, param)
+                            
+                            # Salida sincronizada
+                            with stdout_lock:
+                                print_vulnerability(f"\033[1;32m[POST] [VULNERABLE]\033[0m {url} => {location}")
+                            
+                            urls_vulnerables.append(f"{url}")
+                            found.append(url)
+                            break
+                except requests.exceptions.Timeout:
+                    continue
+                except requests.exceptions.RequestException:
+                    continue
+                except Exception:
+                    continue
+                finally:
+                    with lock:
+                        if current < total_tasks:
+                            current += 1
+                            update_progress(current, total_tasks)
+
+    # Crear tareas de manera más eficiente
+    tasks = []
     
-     lu=l[0] + ".google.com"
-     req= requests.get(lu,headers=headers,timeout=50,allow_redirects=True)
-         #body= str(urlopen(line).read()).lower()
-         
-     if len(req.history) >= 2:
-         found= found + 1
-         if found == 1:
-                 urls_vulnerables.append('\n****************** VULNERABLE TO OPENREDIRECT: *********************\n')                           
-         print ('\033[1;32m[+]\033[0m ' + req.url, end='\n=')
-         print("\033[1;32mRedirecciones:\033[0m ")
-         for resp in req.history:
-             print(f"\t{resp.status_code}: {resp.url}")
-         urls_vulnerables.append(lu)
-    except:
-       p+=1
-       update_progress(p,total)
-       pass 
-
-
+    # Agrupar tareas por URL para evitar duplicación
+    if urip:
+        for url in urip:
+            tasks.append((test_get_redirect, url))
+    
+    if urif:
+        for url in urif:
+            tasks.append((test_post_redirect, url))
+    
+    # Procesar TODAS las tareas en paralelo para máximo rendimiento
     with ThreadPoolExecutor(max_workers=threads) as executor:
-          
-     for linea in l:      
-         for li in wordlist:
-            if li in linea:
-                 for w in wi:
-                     executor.submit(red_single,linea,w) 
-  
-    if found >= 1:
-     print()   
-     print (Cursor.BACK(50) + Cursor.UP(1) +f'\033[1;32m[+] Found [{found}] REDIRECT parameter/s"\033[0m')
+        # Enviar todas las tareas al pool de hilos
+        futures = [executor.submit(task[0], *task[1:]) for task in tasks]
+        
+        # Esperar a que se completen todas (pero en paralelo)
+        for future in futures:
+            try:
+                future.result()
+            except Exception:
+                pass
+    
+    # Limpiar salida final
+    with stdout_lock:
+        sys.stdout.write('\r' + ansi.clear_line())
+        sys.stdout.flush()
+    
+        sys.stdout.write('\n')  # Asegurar salto de línea final
+        sys.stdout.flush()
+    if found:
+        sys.stdout.write(f'\n\033[1;36m[+] Found {len(found)} potential Open Redirect vulnerabilities\033[0m\n')
+        sys.stdout.flush()
     else:
-     print (Cursor.BACK(50) + Cursor.UP(1) + '      '*80)        
-     print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;31m[-] No results found\033[0m")
-     print()    
-
-def redirect_params(l,params,threads):
-    print()
-    print('---------------------')
-    print('\033[1;36m Testing REDIRECT parameters:\033[0m') 
-    print('---------------------')
-    print()  
-    found=0
-
-    def redp_single(linea,li):
-     nonlocal found
-
-     if li in linea:
-             found= found + 1
-             if found == 1:
-                 params.append('\n****************** PARAMETERS TO REDIRECT: *********************\n') 
-             print('\033[1;32m[+]\033[0m ' + linea)
-             params.append(linea)
-         
-    with ThreadPoolExecutor(max_workers=threads) as executor:
-         for linea in l: 
-             for li in wordlist:
-                 executor.submit(redp_single,linea,li)
-                 
-    if found >= 1:
-     print()
-     print (f'\033[1;32m[+] Found [{found}] REDIRECT parameter/s"\033[0m')
-    else:
-     print("\033[1;31m[-] No results found\033[0m")
-
-
+        sys.stdout.write('\n\033[1;31m[-] No Open Redirect vulnerabilities found\033[0m\n')
+        sys.stdout.flush()
+    
+    return urls_vulnerables

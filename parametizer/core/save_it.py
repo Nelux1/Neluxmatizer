@@ -27,7 +27,7 @@ def save_func(final_urls , outfile , domain):
         with open(filename, "a" , encoding="utf-8") as f:
             f.write(i+"\n")
 
-def save_output(urls_vulnerables,nfile,domain_vuln):
+def save_output(urls_vulnerables,nfile,domain_vuln, append_mode=False):
 
     if nfile:
         if "/" in nfile:
@@ -37,7 +37,8 @@ def save_output(urls_vulnerables,nfile,domain_vuln):
     else :
         filename = f"output/{domain_vuln}.txt"
     
-    if os.path.exists(filename):
+    # Solo borrar si no es modo append
+    if os.path.exists(filename) and not append_mode:
         os.remove(filename)
 
     if not os.path.exists(os.path.dirname(filename)):

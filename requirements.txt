@@ -1,8 +1,69 @@
-certifi==2020.4.5.1
-chardet==3.0.4
-idna==2.9
-requests==2.31.0
-urllib3==1.25.8
-mechanize
-bs4
-lxml
+# Neluxmatizer - Advanced Web Vulnerability Scanner
+# Requirements file for Python dependencies
+
+# Core HTTP and web libraries
+requests>=2.25.1
+urllib3>=1.26.5
+
+# HTML/XML parsing and web scraping
+beautifulsoup4>=4.9.3
+lxml>=4.6.3
+
+# Terminal and output formatting
+colorama>=0.4.4
+
+# Progress bars and terminal UI
+tqdm>=4.62.0
+
+# Web automation and screenshot capture
+selenium>=4.0.0
+webdriver-manager>=3.8.0
+
+# Image processing for screenshots
+Pillow>=8.3.0
+
+# Concurrency and threading (built-in with Python 3.2+)
+# concurrent.futures is part of the standard library
+
+# Additional utilities
+# These are part of Python standard library, no need to install:
+# - argparse
+# - os
+# - sys
+# - time
+# - threading
+# - json
+# - re
+# - urllib.parse
+# - xml.etree.ElementTree
+# - signal
+# - datetime
+# - html
+# - base64
+
+# Optional dependencies for enhanced functionality
+# Uncomment if you want to use these optional features:
+
+# For async HTTP requests (future enhancement)
+# aiohttp>=3.8.0
+
+# For better JSON handling
+# ujson>=4.0.0
+
+# For advanced HTTP client features
+# httpx>=0.24.0
+
+# For development and testing (optional)
+# pytest>=6.2.5
+# black>=21.7b0
+# flake8>=3.9.0
+# mypy>=0.910
+
+# Installation instructions:
+# pip3 install -r requirements.txt
+# 
+# For minimal installation (core functionality only):
+# pip3 install requests beautifulsoup4 colorama urllib3 lxml tqdm
+#
+# For full installation with PoC generation:
+# pip3 install requests beautifulsoup4 colorama urllib3 lxml tqdm selenium webdriver-manager Pillow

@@ -1,274 +1,392 @@
-from pprint import pprint
-from bs4 import BeautifulSoup as bs
-from urllib.parse import urljoin
 import requests
-from urllib import parse as urlparse
-from parametizer.progress import update_progress
-import http.cookiejar
-import os, sys
-from urllib.request import urlopen, Request
-from urllib.error import URLError, HTTPError
 import random
-from colorama import Back, Fore, Cursor, init
-from time import sleep
+import sys
+import os
+import os
+import threading
+import urllib.parse
+from bs4 import BeautifulSoup
+from urllib.parse import urlparse, parse_qs, urljoin, quote
 from concurrent.futures import ThreadPoolExecutor
+from colorama import init, ansi
+from parametizer.progress import update_progress, print_vulnerability
+from parametizer.core.headers import get_headers
+import urllib3
+import sys
+import os
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from vulnerability_manager import vuln_manager
+
+# Importar el sistema de manejo de bloqueos
+try:
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from core.block_handler import create_safe_request_session
+    BLOCK_HANDLER_AVAILABLE = True
+except ImportError:
+    BLOCK_HANDLER_AVAILABLE = False
+
 init()
-
-wordl=[
-    "q=",
-    "s=",
-    "search=",
-    "lang=",
-    "keyword=",
-    "query=",
-    "page=",
-    "keywords=",
-    "year=",
-    "view=",
-    "email=",
-    "type=",
-    "name=",
-    "p=",
-    "callback=",
-    "jsonp=",
-    "api_key=",
-    "api=",
-    "password=",
-    "email=",
-    "emailto=",
-    "token=",
-    "username=",
-    "csrf_token=",
-    "unsubscribe_token=",
-    "id=",
-    "item=",
-    "page_id=",
-    "month=",
-    "immagine=",
-    "list_type=",
-    "url=",
-    "terms=",
-    "categoryid=",
-    "key=",
-    "l=",
-    "begindate=",
-    "enddate="
-]
-
-user_agents = [
- "Mozilla/5.0 (X11; U; Linux i686; it-IT; rv:1.9.0.2) Gecko/2008092313 Ubuntu/9.25 (jaunty) Firefox/3.8",
- "Mozilla/5.0 (X11; Linux i686; rv:2.0b3pre) Gecko/20100731 Firefox/4.0b3pre",
- "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-GB; rv:1.8.1.6)",
- "Mozilla/5.0 (Macintosh; U; Intel Mac OS X; en)",
- "Mozilla/3.01 (Macintosh; PPC)",
- "Mozilla/4.0 (compatible; MSIE 5.5; Windows NT 5.9)",  
- "Mozilla/5.0 (X11; U; Linux 2.4.2-2 i586; en-US; m18) Gecko/20010131 Netscape6/6.01",  
- "Opera/8.00 (Windows NT 5.1; U; en)",  
- "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US) AppleWebKit/525.19 (KHTML, like Gecko) Chrome/0.2.153.1 Safari/525.19"
-]
-
-user_agent = random.choice (user_agents)
-headers = {'User-Agent': user_agent}
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
-def xss(l,wordlist,urls_vulnerables,threads):
+def is_xss_response(text, payload):
+    """Validación más estricta para detectar XSS real"""
+    
+    # Verificar si el payload se refleja exactamente en el cuerpo de la respuesta
+    if payload in text:
+        return True
+    
+    # Verificar si el payload se refleja de forma codificada
+    import html
+    decoded_payload = html.unescape(payload)
+    if decoded_payload in text:
+        return True
+    
+    # Verificar si el payload se refleja en atributos HTML (más específico)
+    if f'"{payload}"' in text or f"'{payload}'" in text:
+        return True
+    
+    # Verificar si hay indicadores específicos de XSS exitoso
+    xss_indicators = [
+        "<script>",
+        "javascript:",
+        "onerror=",
+        "onload=",
+        "onclick=",
+        "onmouseover=",
+        "onfocus=",
+        "alert(",
+        "prompt(",
+        "confirm(",
+        "document.cookie",
+        "window.location",
+        "eval(",
+        "innerHTML"
+    ]
+    
+    # Solo considerar válido si hay múltiples indicadores o el payload se refleja claramente
+    indicator_count = sum(1 for indicator in xss_indicators if indicator in text.lower())
+    
+    # Verificar que no sea solo un mensaje de error o página 404
+    if "404" in text or "not found" in text.lower() or "error" in text.lower():
+        return False
+    
+    # EVITAR FALSOS POSITIVOS: Si hay errores de SQL, NO es XSS
+    if "sql syntax" in text.lower() or "mysql" in text.lower() or "you have an error in your sql" in text.lower():
+        return False
+    
+    # Verificar que la respuesta tenga contenido significativo
+    if len(text.strip()) < 50:  # Respuestas muy cortas probablemente son errores
+        return False
+    
+    return indicator_count >= 2 or payload in text  # Al menos 2 indicadores o payload reflejado
+
+def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, random_agent=False):
     print()
-    print('---------------------')
-    print('\033[1;36m Testing xss: \033[0m') 
-    print('---------------------')
+    print('\033[1;36m<<<<<<<<<<<<\033[0m Testing Cross-Site Scripting \033[1;36m>>>>>>>>>>>>>\033[0m\n')
     print()
-    limp=''
-    found=0
-    total = len(l)    
-    progress=0
+    total = (len(urip)*2 + len(urif)) * len(wordlist)
+    current = 0
+    found = 0
+    lock = threading.Lock()
+    vuln_set = set()
+    
+    # Cache para baselines y endpoints vulnerables
+    baseline_cache = {}
+    form_cache = {}
+    stdout_lock = threading.Lock()
 
-    def xss_single(linea,li):
+    def test_url(url, payload):
+        nonlocal current, found
+        parsed = urlparse(url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        qs = parse_qs(parsed.query)
+        headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
 
-        nonlocal found,progress
-        
-        
-        if 'FUZZ' in linea:
-         linea= linea.replace('=FUZZ',f'={li}')
-         linea= linea.replace(' ','%20')
-        elif '=' and not 'FUZZ' in linea:
-          linea= linea.replace('=',f'={li}')
-          linea= linea.replace(' ','%20')                         
-        try:
-          req= requests.get(linea,headers=headers,timeout=50)
-          body= str(urlopen(linea).read()).lower()
-          if li in body:
-             if ".json" in linea:
-                 pass
-             else:
-                 found= found + 1
-                 if found == 1:
-                     urls_vulnerables.append('\n****************** VULNERABLE TO XSS: *********************\n')
-                 print ('\033[1;32m[+]\033[0m ' + req.url, end='\n')
-                 urls_vulnerables.append(linea)
-          progress+=1 / len(wordlist)
-          update_progress(progress, total)           
-        except:
-         progress+=1 / len(wordlist)
-         update_progress(progress, total)  
-         pass        
-        linea= linea.replace('%20',' ')
-        linea= linea.replace(f'{li}',limp)
+        if not qs:
+            with lock:
+                current += 1
+                update_progress(current, total)
+            return
 
-        
-    with ThreadPoolExecutor(max_workers=threads) as executor:                      
-       for linea in l:
-          for li in wordlist:
-             executor.submit(xss_single,linea,li)
-
-    if found >=1:
-     print()
-     print (Cursor.BACK(50) + Cursor.UP(1) + f'\033[1;32m[+] Found [{found}] results vulnerable to XSS\033[0m')
-    else:
-     print (Cursor.BACK(50) + Cursor.UP(1) + '      '*80)        
-     print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;31m[-] No results found\033[0m")
-     print()           
-
-
-def xss_forms(l,wordlist,urls_vulnerables):
-        print()
-        print('---------------------')
-        print('\033[1;36m Testing xss in forms: \033[0m') 
-        print('---------------------')
-        print()
-        f=0
-        p=0
-        total = len(l)    
-        try:
-             for linea in l:
-                for li in wordlist:
-                    if scan_xss(linea,li):
-                        f+=1                    
-                        if f == 1:
-                            urls_vulnerables.append('\n****************** VULNERABLE TO XSS FORMS: *********************\n')
-                        urls_vulnerables.append(linea)
-                p+=1
-                update_progress(p, total)                 
-        except:
-            p+=1
-            update_progress(p, total)       
-            pass
-
-        if f >=1:  
-           print (f'\033[1;32m[+] Found [{f}] results vulnerable to XSS\033[0m')
+        # Crear sesión segura con manejo de bloqueos si está disponible
+        if BLOCK_HANDLER_AVAILABLE:
+            session = create_safe_request_session(headers)
         else:
-            print (Cursor.BACK(50) + Cursor.UP(1) + '      '*80)        
-            print(Cursor.BACK(50) + Cursor.UP(1) + "\033[1;31m[-] No results found\033[0m")
-            print()           
-     
-def xss_params(l,params,threads):
-    print()
-    print('---------------------')
-    print('\033[1;36m Testing XSS parameters:\033[0m') 
-    print('---------------------')
-    print()
-    found=0
-    
-    def xssp_single(linea,li):
-     for linea in l:   
-         for li in wordl:
-             if li in linea:
-                 found= found + 1
-                 if found == 1:
-                     params.append('\n****************** PARAMETERS TO XSS: *********************\n') 
-                 print('\033[1;32m[+]\033[0m ' + linea)
-                 params.append(linea)
-         
-    with ThreadPoolExecutor(max_workers=threads) as executor:
-       for linea in l:
-          for li in wordl:
-             executor.submit(xssp_single,linea,li)     
+            session = requests.Session()
+            session.headers.update(headers)
 
-    if found >= 1:
-     print()
-     print (f'\033[1;32m[+] Found [{found}] XSS parameter/s"\033[0m')
-    else:
-     print("\033[1;31m[-] No results found\033[0m")
-     print() 
-       
-def get_all_forms(url):
-       
-     """Given a `url`, it returns all forms from the HTML content"""    
-     soup = bs(requests.get(url).content, "html.parser")
-     return soup.find_all("form")
-    
-def get_form_details(form):
-        """
-        This function extracts all possible useful information about an HTML `form`
-        """
-        details = {}
-        # get the form action (target url)
-        action = form.attrs.get("action", "").lower()
-        # get the form method (POST, GET, etc.)
-        method = form.attrs.get("method", "get").lower()
-        # get all the input details such as type and name
-        inputs = []
-        for input_tag in form.find_all("input"):
-            input_type = input_tag.attrs.get("type", "text")
-            input_name = input_tag.attrs.get("name")
-            inputs.append({"type": input_type, "name": input_name})
-        # put everything to the resulting dictionary
-        details["action"] = action
-        details["method"] = method
-        details["inputs"] = inputs
-        return details
-    
-def submit_form(form_details, url, value):
-        """
-        Submits a form given in `form_details`
-        Params:
-            form_details (list): a dictionary that contain form information
-            url (str): the original URL that contain that form
-            value (str): this will be replaced to all text and search inputs
-        Returns the HTTP Response after form submission
-        """
-        # construct the full URL (if the url provided in action is relative)
-        target_url = urljoin(url, form_details["action"])
-        # get the inputs
-        inputs = form_details["inputs"]
-        data = {}
-        for input in inputs:
-            # replace all text and search values with `value`
-            if input["type"] == "text" or input["type"] == "search":
-                input["value"] = value
-            input_name = input.get("name")
-            input_value = input.get("value")
-            if input_name and input_value:
-                # if input name and value are not None, 
-                # then add them to the data of form submission
-                data[input_name] = input_value
-        if form_details["method"] == "post":
-            return requests.post(target_url, data=data)
-        else:
-            # GET request
-            return requests.get(target_url, params=data)
-        
-def scan_xss(url,payload):
-        """
-        Given a `url`, it prints all XSS vulnerable forms and 
-        returns True if any is vulnerable, False otherwise
-        """
-        # get all the forms from the URL
-        forms = get_all_forms(url)
-        js_script = payload
-        # returning value
-        is_vulnerable = False
-        # iterate over all forms
-        for form in forms:
-            form_details = get_form_details(form)
-            content = submit_form(form_details, url, js_script).content.decode()
-            if js_script in content:
-                if "https://web.archive.org/" in url:
-                    pass
+        # Verificar si esta URL ya fue explotada usando el sistema unificado
+        if vuln_manager.should_skip_url(base_url, base_url_only=True):
+            with lock:
+                current += 1
+                update_progress(current, total)
+            return
+
+        for param in qs:
+            # Cache de baseline para GET
+            baseline_key = f"GET-{base_url}-{param}"
+            if baseline_key not in baseline_cache:
+                try:
+                    data = {p: "TEST123" for p in qs}
+                    r = session.get(base_url, params=data, verify=False, timeout=5)
+                    if r.status_code == 200:
+                        baseline_cache[baseline_key] = r.text
+                    else:
+                        baseline_cache[baseline_key] = ""
+                except requests.exceptions.Timeout:
+                    baseline_cache[baseline_key] = ""
+                except requests.exceptions.RequestException:
+                    baseline_cache[baseline_key] = ""
+                except Exception:
+                    baseline_cache[baseline_key] = ""
+            baseline = baseline_cache[baseline_key]
+            
+            if not baseline:
+                continue
+
+            # Probar payload XSS
+            data = {p: "TEST123" for p in qs}
+            data[param] = payload
+            try:
+                r = session.get(base_url, params=data, verify=False, timeout=5, allow_redirects=True)
+                
+                # Solo procesar si la respuesta es exitosa Y el payload se refleja realmente
+                if r.status_code == 200 and is_xss_response(r.text, payload) and r.text != baseline:
+                    # Verificar que el payload realmente se refleja (no solo en URL)
+                    if payload in r.text or urllib.parse.unquote(payload) in r.text:
+                        # Verificar si ya se explotó esta combinación específica
+                        if not vuln_manager.is_already_exploited(base_url, param):
+                            # Verificar falso positivo
+                            if not vuln_manager.verify_false_positive(base_url, payload, "GET", custom_headers, random_agent):
+                                # Marcar como explotada
+                                vuln_manager.mark_as_exploited(base_url, param)
+                                vuln_manager.mark_as_exploited(base_url, base_url_only=True)
+                                
+                                # Salida sincronizada usando la nueva función
+                                with stdout_lock:
+                                    print_vulnerability(f"\033[1;32m[GET] [VULNERABLE]\033[0m {base_url}?{param}={quote(payload)}")
+                                
+                                # Guardar URL con payload para el PoC
+                                urls_vulnerables.append(f"{base_url}?{param}={quote(payload)}")
+                                found += 1
+                                # CORTAR INMEDIATAMENTE - no probar más payloads en esta URL
+                                with lock:
+                                    current += 1
+                                    update_progress(current, total)
+                                return
+            except requests.exceptions.Timeout:
+                continue
+            except requests.exceptions.RequestException:
+                continue
+            except Exception:
+                continue
+
+        # POST con los mismos parámetros
+        for param in qs:
+            # Cache de baseline para POST
+            baseline_key = f"POST-{base_url}-{param}"
+            if baseline_key not in baseline_cache:
+                try:
+                    data = {p: "TEST123" for p in qs}
+                    r = session.post(base_url, data=data, verify=False, timeout=5)
+                    if r.status_code == 200:
+                        baseline_cache[baseline_key] = r.text
+                    else:
+                        baseline_cache[baseline_key] = ""
+                except requests.exceptions.Timeout:
+                    baseline_cache[baseline_key] = ""
+                except requests.exceptions.RequestException:
+                    baseline_cache[baseline_key] = ""
+                except Exception:
+                    baseline_cache[baseline_key] = ""
+            baseline = baseline_cache[baseline_key]
+            
+            if not baseline:
+                continue
+
+            # Probar payload XSS
+            data = {p: "TEST123" for p in qs}
+            data[param] = payload
+            try:
+                r = session.post(base_url, data=data, verify=False, timeout=5, allow_redirects=True)
+                
+                # Solo procesar si la respuesta es exitosa Y el payload se refleja realmente
+                if r.status_code == 200 and is_xss_response(r.text, payload) and r.text != baseline:
+                    # Verificar que el payload realmente se refleja (no solo en URL)
+                    if payload in r.text or urllib.parse.unquote(payload) in r.text:
+                        key = f"{base_url}?{param}={payload}"
+                        if key not in vuln_set:
+                            vuln_set.add(key)
+                            # Marcar esta URL como explotada para evitar más pruebas
+                            vuln_set.add(url_key)
+                            
+                            # Salida sincronizada
+                            with stdout_lock:
+                                sys.stdout.write('\r' + ansi.clear_line())
+                                sys.stdout.flush()
+                                print(f"\033[1;32m[POST] [VULNERABLE]\033[0m {base_url}?{param}={quote(payload)}")
+                            
+                            # Guardar URL con payload para el PoC
+                            urls_vulnerables.append(f"{base_url}?{param}={quote(payload)}")
+                            found += 1
+                            # CORTAR INMEDIATAMENTE - no probar más payloads en esta URL
+                            with lock:
+                                current += 1
+                                update_progress(current, total)
+                            return
+            except requests.exceptions.Timeout:
+                continue
+            except requests.exceptions.RequestException:
+                continue
+            except Exception:
+                continue
+
+        with lock:
+            current += 1
+            update_progress(current, total)
+
+    def test_form(url, payload):
+        nonlocal current, found
+        try:
+            headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
+            
+            # Crear sesión segura con manejo de bloqueos si está disponible
+            if BLOCK_HANDLER_AVAILABLE:
+                session = create_safe_request_session(headers)
+            else:
+                session = requests.Session()
+                session.headers.update(headers)
+            
+            # Cache de formularios para evitar re-parsing
+            if url not in form_cache:
+                r = session.get(url, timeout=7)
+                soup = BeautifulSoup(r.text, "html.parser")
+                forms = soup.find_all("form")
+                form_cache[url] = forms
+            else:
+                forms = form_cache[url]
+                
+            for form in forms:
+                action = form.get("action")
+                method = form.get("method", "get").lower()
+                inputs = form.find_all("input")
+                data = {}
+
+                for i in inputs:
+                    name = i.get("name")
+                    if name:
+                        data[name] = payload
+
+                if not data:
+                    continue
+
+                full_url = urljoin(url, action) if action else url
+                
+                # Cache de baseline para formularios
+                baseline_key = f"{method}-{full_url}-{','.join(data.keys())}"
+                if baseline_key not in baseline_cache:
+                    try:
+                        baseline_data = {k: "TEST123" for k in data}
+                        if method == "post":
+                            r = session.post(full_url, data=baseline_data, timeout=5)
+                        else:
+                            r = session.get(full_url, params=baseline_data, timeout=5)
+                        
+                        if r.status_code == 200:
+                            baseline_cache[baseline_key] = r.text
+                        else:
+                            baseline_cache[baseline_key] = ""
+                    except requests.exceptions.Timeout:
+                        baseline_cache[baseline_key] = ""
+                    except requests.exceptions.RequestException:
+                        baseline_cache[baseline_key] = ""
+                    except Exception:
+                        baseline_cache[baseline_key] = ""
+                
+                baseline = baseline_cache[baseline_key]
+                if not baseline:
+                    continue
+
+                if method == "post":
+                    res = session.post(full_url, data=data, timeout=5)
                 else:
-                        print(f"\033[1;32m[+]\033[0m XSS Detected on {url}")
-                        print(f"\x1b[1;35m[*]\033[0;m Form details:")
-                        pprint(form_details)
-                        print()
-                        is_vulnerable = True
-                    # won't break because we want to print available vulnerable forms
-        return is_vulnerable    
+                    res = session.get(full_url, params=data, timeout=5)
+
+                # Solo procesar si la respuesta es exitosa
+                if res.status_code == 200 and is_xss_response(res.text, payload) and res.text != baseline:
+                    key = f"{full_url}|{','.join(sorted(data.keys()))}|{payload}"
+                    if key not in vuln_set:
+                        vuln_set.add(key)
+                        
+                        # Salida sincronizada usando la nueva función
+                        with stdout_lock:
+                            encoded_data = {k: urllib.parse.quote_plus(v) for k, v in data.items()}
+                            print_vulnerability(f"\033[1;32m[FORM] [VULNERABLE]\033[0m {full_url}" + "\033[1;32m ==> \033[0m" + f"{encoded_data}" )
+                        
+                        # Guardar URL con datos del formulario para el PoC
+                        urls_vulnerables.append(f"{full_url} => {data}")
+                        found += 1
+        except requests.exceptions.Timeout:
+            pass  # Skip timeouts silently
+        except requests.exceptions.RequestException:
+            pass  # Skip other request errors
+        except Exception:
+            pass  # Skip any other errors
+
+        with lock:
+            current += 1
+            update_progress(current, total)
+
+    # Crear tareas de manera más eficiente
+    tasks = []
+    
+    # Agrupar tareas por URL para evitar duplicación
+    for url in urip:
+        for payload in wordlist:
+            tasks.append((test_url, url, payload))
+    
+    for url in urif:
+        for payload in wordlist:
+            tasks.append((test_form, url, payload))
+    
+    # Procesar TODAS las tareas en paralelo para máximo rendimiento
+    try:
+        with ThreadPoolExecutor(max_workers=threads) as executor:
+            # Enviar todas las tareas al pool de hilos
+            futures = [executor.submit(task[0], *task[1:]) for task in tasks]
+            
+            # Esperar a que se completen todas (pero en paralelo)
+            for future in futures:
+                try:
+                    # Verificar interrupción antes de procesar cada resultado
+                    from parametizer.interrupt import check_interruption
+                    if check_interruption():
+                        # Cancelar todas las tareas pendientes
+                        for f in futures:
+                            f.cancel()
+                        return
+                    
+                    future.result()
+                except Exception:
+                    pass
+    except KeyboardInterrupt:
+        from parametizer.interrupt import is_interrupted
+        if is_interrupted():
+            return
+        else:
+            raise
+    
+    # Limpiar salida final
+    with stdout_lock:
+        sys.stdout.write('\r' + ansi.clear_line())
+        sys.stdout.flush()
+        print()  # Asegurar salto de línea final
+
+    if found > 0:
+        print(f'\n\033[1;36m[+] Found {found} potential XSS vulnerabilities\033[0m\n')
+    else:
+        print('\n\033[1;31m[-] No XSS vulnerabilities found\033[0m\n')
+    
+    return urls_vulnerables
