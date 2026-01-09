@@ -3,7 +3,7 @@
 
 # Core HTTP and web libraries
 requests>=2.25.1
-urllib3>=1.26.5
+urllib3>=2.6.3
 
 # HTML/XML parsing and web scraping
 beautifulsoup4>=4.9.3
