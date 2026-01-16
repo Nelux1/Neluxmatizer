@@ -19,7 +19,7 @@ import re
 import os
 import time
 
-# Importar el sistema de manejo de bloqueos
+# Import block handling system
 try:
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from core.block_handler import BlockHandler, ResultSaver, create_safe_request_session
@@ -40,10 +40,10 @@ def generate_pocs_for_domain(domain_vulnerabilities, domain, oob_domain=None):
         sys.stdout.write(f"✅ PoC Generator inicializado para dominio: {domain}\n")
         sys.stdout.flush()
         
-        # Contadores por tipo de vulnerabilidad
+        # Counters per vulnerability type
         poc_count = 0
         
-        # Generar UN PoC por tipo de vulnerabilidad para este dominio
+        # Generate ONE PoC per vulnerability type for this domain
         for vuln_type, vulns in domain_vulnerabilities.items():
             if vulns:
                 try:
@@ -132,16 +132,16 @@ def generate_pocs_for_vulnerabilities(vulnerabilities_by_type, target_url, resul
         sys.stdout.write(f"✅ PoC Generator inicializado para {target_url}\n")
         sys.stdout.flush()
         
-        # Contadores por tipo de vulnerabilidad
+        # Counters per vulnerability type
         poc_count = 0
-        generated_pocs = set()  # Para evitar generar PoCs duplicados
+        generated_pocs = set()  # To avoid generating duplicate PoCs
         
-        # Generar UN PoC por tipo de vulnerabilidad
+        # Generate ONE PoC per vulnerability type
         for vuln_type, vulns in vulnerabilities_by_type.items():
             if vulns and vuln_type not in generated_pocs:
                 generated_pocs.add(vuln_type)
                 
-                # Usar todas las vulnerabilidades de este tipo para generar el PoC
+                # Use all vulnerabilities of this type to generate the PoC
                 try:
                     if vuln_type == 'CLICKJACKING':
                         sys.stdout.write(f"\n🔍 Generating PoC for Clickjacking: {len(vulns)} URLs\n")
@@ -222,16 +222,59 @@ def generate_pocs_for_vulnerabilities(vulnerabilities_by_type, target_url, resul
 
 
 def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
-             urls_vulnerables, threads, payloads, custom_headers, random_agent, oob_domain=None, poc=False, cookies=None, auth_token=None):
+             urls_vulnerables, threads, payloads, custom_headers, random_agent, oob_domain=None, poc=False, cookies=None, auth_token=None, checkpoint_manager=None, checkpoint_id=None):
 
-    # Contadores para el reporte final
+    # Counters for final report
     total_urls = len(urls)
     processed_urls = 0
-    blocked_urls = 0  # Solo se incrementa cuando realmente se bloquea durante ataques
-    bypassed_urls = 0  # Solo se incrementa cuando se logra bypass durante ataques
-    safe_urls = 0      # Solo se incrementa cuando no hay WAF o no se bloquea
+    blocked_urls = 0  # Only incremented when actually blocked during attacks
+    bypassed_urls = 0  # Only incremented when bypass is achieved during attacks
+    safe_urls = 0      # Only incremented when there's no WAF or not blocked
     
-    # Diccionario para organizar vulnerabilidades por tipo
+    # 🔄 CHECKPOINT: Load already processed URLs if checkpoint exists
+    processed_urls_from_checkpoint = []
+    if checkpoint_manager and checkpoint_id:
+        try:
+            processed_urls_from_checkpoint = checkpoint_manager.get_processed_urls(checkpoint_id)
+            if processed_urls_from_checkpoint:
+                sys.stdout.write(f'\033[1;36m[🔄] Active checkpoint: {len(processed_urls_from_checkpoint)} URLs already processed previously\033[0m\n')
+                sys.stdout.flush()
+        except Exception as e:
+            sys.stdout.write(f'\033[1;33m[⚠️] Error loading checkpoint: {e}\033[0m\n')
+            sys.stdout.flush()
+    
+    # Helper function to save checkpoint
+    def save_checkpoint_for_url(url_to_save):
+        """Save checkpoint for a URL that is being skipped or completed"""
+        if checkpoint_manager and checkpoint_id:
+            try:
+                if url_to_save not in processed_urls_from_checkpoint:
+                    processed_urls_from_checkpoint.append(url_to_save)
+                checkpoint_data = {
+                    'processed_urls': processed_urls_from_checkpoint,
+                    'total_urls': total_urls,
+                    'current_progress': processed_urls,
+                    'scan_params': {
+                        'cors': c,
+                        'click': cl,
+                        'crlf': cr,
+                        'xss': x,
+                        'xxe': xe,
+                        'lfi': l,
+                        'sql': s,
+                        'redirect': r,
+                        'rce': rc,
+                        'ssrf': sr,
+                        'ssti': sst,
+                        'threads': threads
+                    }
+                }
+                checkpoint_manager.save_checkpoint(checkpoint_id, checkpoint_data)
+            except Exception as e:
+                sys.stdout.write(f'\033[1;33m[⚠️] Error saving checkpoint: {e}\033[0m\n')
+                sys.stdout.flush()
+    
+    # Dictionary to organize vulnerabilities by type
     vulnerabilities_by_type = {
         'XSS': [],
         'SQLI': [],
@@ -247,20 +290,62 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
     }
     
     # 🔒 BLOCK HANDLER SYSTEM
-    block_handlers = {}  # Un handler por URL
-    result_savers = {}   # Un saver por URL
+    block_handlers = {}  # One handler per URL
+    result_savers = {}   # One saver per URL
     
-    # Inicializar handlers para cada URL
+    # Initialize handlers for each URL
     for url in urls:
         if BLOCK_HANDLER_AVAILABLE:
             block_handlers[url] = BlockHandler(url, custom_headers)
-            if o:  # Solo si hay output habilitado
+            if o:  # Only if output is enabled
                 result_savers[url] = ResultSaver(fname, poc)
         else:
             block_handlers[url] = None
             result_savers[url] = None
 
     for u in urls:
+        # 🔄 Check interruption before processing each URL
+        try:
+            from parametizer.interrupt import check_interruption
+            if check_interruption():
+                sys.stdout.write(f'\n\033[1;33m[⚠️] Scan interrupted by user\033[0m\n')
+                sys.stdout.flush()
+                
+                # Save checkpoint before exiting
+                if checkpoint_manager and checkpoint_id:
+                    try:
+                        checkpoint_data = {
+                            'processed_urls': processed_urls_from_checkpoint,
+                            'total_urls': total_urls,
+                            'current_progress': processed_urls,
+                            'interrupted': True,
+                            'scan_params': {
+                                'cors': c,
+                                'click': cl,
+                                'crlf': cr,
+                                'xss': x,
+                                'xxe': xe,
+                                'lfi': l,
+                                'sql': s,
+                                'redirect': r,
+                                'rce': rc,
+                                'ssrf': sr,
+                                'ssti': sst,
+                                'threads': threads
+                            }
+                        }
+                        checkpoint_manager.save_checkpoint(checkpoint_id, checkpoint_data)
+                        sys.stdout.write(f'\033[1;32m[💾] Progress saved: {len(processed_urls_from_checkpoint)} URLs processed before interruption\033[0m\n')
+                        sys.stdout.write(f'\033[1;36m[ℹ️] To resume, run the same command again\033[0m\n')
+                        sys.stdout.flush()
+                    except Exception as e:
+                        sys.stdout.write(f'\033[1;33m[⚠️] Error saving checkpoint: {e}\033[0m\n')
+                        sys.stdout.flush()
+                
+                sys.exit(0)
+        except ImportError:
+            pass  # If no interruption module, continue
+        
         processed_urls += 1
         sys.stdout.write(f'\033[1;36m[+] Scanning {u} ({processed_urls}/{total_urls})\033[0m\n')
         sys.stdout.flush()
@@ -280,23 +365,23 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             sys.stdout.write(f'\033[1;33m[!] No authentication provided - running unauthenticated scan\033[0m\n')
             sys.stdout.flush()
         
-        # 🔒 WAF DETECTION (INFORMATIVA SOLO - NO BLOQUEA)
+        # 🔒 WAF DETECTION (INFORMATIVE ONLY - DOES NOT BLOCK)
         try:
-            # Importar el detector de WAF
+            # Import WAF detector
             sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             from core.waf_detector import WAFDetector
             
             #print(f'\033[1;33m[🔍] Checking WAF protection (informative only)...\033[0m')
             waf_detector = WAFDetector(u, custom_headers)
             
-            # Detectar WAF silenciosamente (solo informativo, no bloquea)
+            # Detect WAF silently (informative only, does not block)
             waf_detector.detect_waf()
-            # Solo mostrar cuando NO hay WAF o cuando realmente bloquee
+            # Only show when there's NO WAF or when it actually blocks
             if not waf_detector.waf_detected:
                 sys.stdout.write(f'\033[1;32m[+] No WAF detected\033[0m\n')
                 sys.stdout.flush()
-            # Si hay WAF detectado, no imprimimos nada aquí
-            # El reporte solo aparecerá si realmente nos bloquea durante los ataques
+            # If WAF is detected, don't print anything here
+            # Report will only appear if it actually blocks us during attacks
                 
         except ImportError:
             sys.stdout.write(f'\033[1;33m[⚠️] WAF detector not available - continuing without WAF protection\033[0m\n')
@@ -317,7 +402,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             sys.stdout.write(f'\033[1;33m[+] Starting advanced parameter discovery...\033[0m\n')
             sys.stdout.flush()
             
-            # Usar headers autenticados si están disponibles
+            # Use authenticated headers if available
             discovery_headers = custom_headers
             if auth_manager and auth_manager.is_authenticated():
                 discovery_headers = auth_manager.get_session_headers(custom_headers)
@@ -339,7 +424,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
                 else:
                     urip = discovered_urls
                 
-                # Limpiar completamente la línea anterior antes de imprimir
+                # Clear the previous line completely before printing
                 sys.stdout.write(f'\r\033[K\033[1;32m[+] Advanced discovery found {len(discovered_params)} parameters\033[0m\n')
                 sys.stdout.flush()
             else:
@@ -356,6 +441,25 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
         if not urip and not urif:
             sys.stdout.write(f'\n\033[1;31m[-] No parameters found for {u}\033[0m\n')
             sys.stdout.flush()
+            
+            # Save to output file even if no parameters found
+            if o:
+                try:
+                    with open(fname, 'a', encoding='utf-8') as f:
+                        f.write(f"\n[SCAN RESULTS FOR: {u}]\n")
+                        f.write(f"[TIMESTAMP: {time.strftime('%Y-%m-%d %H:%M:%S')}]\n")
+                        f.write(f"[INFO] No parameters found - skipping vulnerability scans\n")
+                        f.write(f"\n{'='*80}\n")
+                        f.write(f"SCAN COMPLETED FOR: {u}\n")
+                        f.write(f"TIMESTAMP: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        f.write(f"{'='*80}\n\n")
+                except Exception as e:
+                    sys.stdout.write(f'\033[1;33m[⚠️] Warning: Could not write to output file: {e}\033[0m\n')
+                    sys.stdout.flush()
+            
+            # 🔄 SAVE CHECKPOINT even when no parameters found
+            save_checkpoint_for_url(u)
+            
             continue
 
         sys.stdout.write(f'\033[1;36m[+] Found {len(urip)} URLs with parameters and {len(urif)} forms for {u}\033[0m\n')
@@ -371,7 +475,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
                     result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
                 continue
             
-            # Usar headers autenticados para clickjacking
+            # Use authenticated headers for clickjacking
             scan_headers = custom_headers
             if auth_manager and auth_manager.is_authenticated():
                 scan_headers = auth_manager.get_session_headers(custom_headers)
@@ -388,7 +492,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
                     result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
                 continue
             
-            # Usar headers autenticados para CORS
+            # Use authenticated headers for CORS
             scan_headers = custom_headers
             if auth_manager and auth_manager.is_authenticated():
                 scan_headers = auth_manager.get_session_headers(custom_headers)
@@ -411,7 +515,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
                 '<?xml version="1.0" encoding="ISO-8859-1"?><!DOCTYPE foo [<!ELEMENT foo ANY ><!ENTITY xxe SYSTEM "file:///proc/self/environ" >]><foo>&xxe;</foo>',
                 '<?xml version="1.0" encoding="ISO-8859-1"?><!DOCTYPE foo [<!ELEMENT foo ANY ><!ENTITY xxe SYSTEM "php://filter/convert.base64-encode/resource=index.php" >]><foo>&xxe;</foo>'
             ]
-            # Usar headers autenticados para XXE
+            # Use authenticated headers for XXE
             scan_headers = custom_headers
             if auth_manager and auth_manager.is_authenticated():
                 scan_headers = auth_manager.get_session_headers(custom_headers)
@@ -572,20 +676,20 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             vulnerabilities_by_type['CRLF'].extend(crlf_vulns)
             urls_vulnerables.extend(crlf_vulns)
 
-        # No generar PoCs aquí - se hará al final para todas las URLs
+        # Don't generate PoCs here - will be done at the end for all URLs
         
         # 🔒 CHECK IF TARGET WAS BLOCKED AND SAVE PARTIAL RESULTS
         if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
             sys.stdout.write(f'\n\033[1;31m[🚨] Target {u} was blocked during scanning{Style.RESET_ALL}\n')
             sys.stdout.flush()
             
-            # Incrementar contador de bloqueos
+            # Increment block counter
             blocked_urls += 1
             
             if u in result_savers and result_savers[u]:
                 result_savers[u].save_partial_results(u, f"WAF blocking after {block_handlers[u].block_count} attempts")
             
-            # Si es la única URL, cerrar el programa
+            # If it's the only URL, close the program
             if total_urls == 1:
                 sys.stdout.write(f'\n\033[1;31m🚨 Single target blocked - terminating scan{Style.RESET_ALL}\n')
                 sys.stdout.flush()
@@ -600,26 +704,45 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             else:
                 sys.stdout.write(f'\033[1;33m[⏭️] Continuing with next target...{Style.RESET_ALL}\n')
                 sys.stdout.flush()
+                # Save checkpoint before continuing
+                save_checkpoint_for_url(u)
                 continue
         else:
-            # Target no fue bloqueado - incrementar contador de éxito
+            # Target was not blocked - increment success counter
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].block_count > 0:
-                # Hubo intentos de bypass exitosos
+                # There were successful bypass attempts
                 bypassed_urls += 1
             else:
-                # No hubo WAF o no se bloqueó
+                # There was no WAF or it didn't block
                 safe_urls += 1
         
-        # Guardar output por cada URL (append mode)
+        # Save output for each URL (append mode)
         if o:
             sys.stdout.write(f'\n\033[1;36m💾 Saving results for {u} to {fname}...\033[0m\n')
             sys.stdout.flush()
             
-            # Contar total de vulnerabilidades
+            # Check if file exists (resuming from checkpoint) and add separator if needed
+            file_exists = os.path.exists(fname)
+            if file_exists:
+                # Check if last line is not a separator (to avoid duplicate separators)
+                try:
+                    with open(fname, 'r', encoding='utf-8') as f:
+                        lines = f.readlines()
+                        if lines and not lines[-1].strip().startswith('='):
+                            # Last line is not a separator, add resume marker
+                            with open(fname, 'a', encoding='utf-8') as f:
+                                f.write(f"\n{'='*80}\n")
+                                f.write(f"RESUMING SCAN FROM CHECKPOINT\n")
+                                f.write(f"TIMESTAMP: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                                f.write(f"{'='*80}\n\n")
+                except Exception:
+                    pass  # If we can't read, just continue with append
+            
+            # Count total vulnerabilities
             total_vulns = sum(len(vulns) for vulns in vulnerabilities_by_type.values())
             
             if total_vulns > 0:
-                # Escribir directamente al archivo en modo append
+                # Write directly to file in append mode
                 try:
                     with open(fname, 'a', encoding='utf-8') as f:
                         f.write(f"\n[SCAN RESULTS FOR: {u}]\n")
@@ -627,7 +750,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
                         f.write(f"[TOTAL VULNERABILITIES FOUND: {total_vulns}]\n")
                         f.write("-" * 60 + "\n")
                         
-                        # Escribir vulnerabilidades organizadas por tipo
+                        # Write vulnerabilities organized by type
                         for vuln_type, vulns in vulnerabilities_by_type.items():
                             if vulns:
                                 f.write(f"\n=== {vuln_type} VULNERABILITIES ({len(vulns)} found) ===\n")
@@ -642,7 +765,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
                     sys.stdout.write(f'\033[1;33m[⚠️] Warning: Could not write vulnerabilities to output file: {e}\033[0m\n')
                     sys.stdout.flush()
             else:
-                # Si no hay vulnerabilidades, agregar mensaje
+                # If no vulnerabilities, add message
                 try:
                     with open(fname, 'a', encoding='utf-8') as f:
                         f.write(f"[INFO] No vulnerabilities found for {u}\n")
@@ -650,7 +773,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
                     sys.stdout.write(f'\033[1;33m[⚠️] Warning: Could not write to output file: {e}\033[0m\n')
                     sys.stdout.flush()
             
-            # Agregar separador para la siguiente URL
+            # Add separator for next URL
             try:
                 with open(fname, 'a', encoding='utf-8') as f:
                     f.write(f"\n{'='*80}\n")
@@ -661,29 +784,29 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
                 sys.stdout.write(f'\033[1;33m[⚠️] Warning: Could not add separator to output file: {e}\033[0m\n')
                 sys.stdout.flush()
         
-        # 🔍 GENERAR PoCs POR DOMINIO - ANTES DE LIMPIAR LAS VULNERABILIDADES
+        # 🔍 GENERATE PoCs BY DOMAIN - BEFORE CLEARING VULNERABILITIES
         if poc and vulnerabilities_by_type:
-            # Extraer dominio de la URL actual
+            # Extract domain from current URL
             from urllib.parse import urlparse
             parsed_url = urlparse(u)
             domain = parsed_url.netloc.lower()
             
-            # Crear diccionario de vulnerabilidades para este dominio
+            # Create vulnerability dictionary for this domain
             domain_vulnerabilities = {}
             for vuln_type, vulns in vulnerabilities_by_type.items():
-                if vulns:  # Solo si hay vulnerabilidades de este tipo
+                if vulns:  # Only if there are vulnerabilities of this type
                     domain_vulnerabilities[vuln_type] = vulns
             
-            # Generar PoCs para este dominio si hay vulnerabilidades
+            # Generate PoCs for this domain if there are vulnerabilities
             if domain_vulnerabilities:
                 sys.stdout.write(f'\n\033[1;33m[!] Generating PoCs for domain: {domain}\033[0m\n')
                 sys.stdout.flush()
                 generate_pocs_for_domain(domain_vulnerabilities, domain, oob_domain=oob_domain)
         
-        # Limpiar lista de vulnerabilidades para la siguiente URL
+        # Clear vulnerability list for next URL
         urls_vulnerables.clear()
         
-        # Limpiar el diccionario de vulnerabilidades por tipo para la siguiente URL
+        # Clear vulnerability dictionary by type for next URL
         for vuln_type in vulnerabilities_by_type:
             vulnerabilities_by_type[vuln_type].clear()
         
@@ -695,19 +818,25 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
         
         sys.stdout.write(f'\n\033[1;36m✅ Completed scan for {u} ({processed_urls}/{total_urls})\033[0m\n')
         sys.stdout.flush()
+        
+        # 🔄 SAVE CHECKPOINT after processing each URL
+        save_checkpoint_for_url(u)
+        sys.stdout.write(f'\033[1;32m[💾] Progress saved: {processed_urls}/{total_urls} URLs processed\033[0m\n')
+        sys.stdout.flush()
+        
         sys.stdout.write('\033[1;36m' + '='*80 + '\033[0m\n')
         sys.stdout.flush()
 
-    # 🔍 GENERAR PoCs AL FINAL - SOLO SI NO SE USÓ LISTA DE DOMINIOS
-    # Si se usó lista de dominios (-l), los PoCs ya se generaron por dominio
-    if poc and len(urls) == 1:  # Solo generar al final si es un solo dominio
-        # Verificar si hay vulnerabilidades reales
+    # 🔍 GENERATE PoCs AT THE END - ONLY IF DOMAIN LIST WAS NOT USED
+    # If domain list (-l) was used, PoCs were already generated per domain
+    if poc and len(urls) == 1:  # Only generate at the end if it's a single domain
+        # Check if there are real vulnerabilities
         has_vulnerabilities = any(vulns for vulns in vulnerabilities_by_type.values())
 
         if has_vulnerabilities:
             sys.stdout.write(f'\n\033[1;33m[!] Generating Proof of Concepts (PoCs) for all vulnerabilities...\033[0m\n')
             sys.stdout.flush()
-            # Usar la primera URL como target para el PoC
+            # Use the first URL as target for the PoC
             target_url = urls[0] if urls else "unknown"
             generate_pocs_for_vulnerabilities(vulnerabilities_by_type, target_url, None, oob_domain=oob_domain)
         else:
@@ -716,6 +845,16 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
     elif poc and len(urls) > 1:
         sys.stdout.write(f'\n\033[1;32m[!] PoCs already generated per domain during scanning\033[0m\n')
         sys.stdout.flush()
+
+    # 🔄 DELETE CHECKPOINT when scan completes successfully
+    if checkpoint_manager and checkpoint_id:
+        try:
+            checkpoint_manager.delete_checkpoint(checkpoint_id)
+            sys.stdout.write(f'\n\033[1;32m[✅] Scan completed - checkpoint deleted\033[0m\n')
+            sys.stdout.flush()
+        except Exception as e:
+            sys.stdout.write(f'\033[1;33m[⚠️] Error deleting checkpoint: {e}\033[0m\n')
+            sys.stdout.flush()
 
     sys.stdout.write('\033[1;31mCLOSE PROGRAM\033[0m\n')
     sys.stdout.flush()

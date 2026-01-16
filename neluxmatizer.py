@@ -25,7 +25,7 @@ sys.stdout.write("\033[1;36m"+'''
     NNN    NNNNN EEE        LLLL      UUUU    UUU   XX   XX   
     NNN     NNNN EEEEEEEEEE LLLLLLLL  UUUUUUUUUUU XXXX   XXXX 
 
-                                 by Marcos Suarez for pentesters Turbo v1.0 
+                                 by Marcos Suarez for pentesters Turbo v1.1 
 
 '''+ '\033[0;m')
 sys.stdout.flush()
@@ -134,11 +134,11 @@ parser.add_argument("-o",
                      help = 'Output file name')
 parser.add_argument("-C", "--cookies",
                     dest="cookies",
-                    help="Cookies de sesión para autenticación continua (format: 'name1=value1; name2=value2')",
+                    help="Session cookies for continuous authentication (format: 'name1=value1; name2=value2')",
                     action='store')
 parser.add_argument("-A", "--auth",
                     dest="auth",
-                    help="Authorization Bearer token para autenticación continua (format: 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...')",
+                    help="Authorization Bearer token for continuous authentication (format: 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...')",
                     action='store')
                                                                               
 args = parser.parse_args()                                                         
@@ -153,27 +153,36 @@ def selector():
     threads=30
     fname= os.path.join('output','urls_vulnerables.txt')
     c = cl = cr = x = xe = l = s = r = rc = sr = sst = o = False
+    checkpoint_manager = None
+    checkpoint_id = None
     if args.version:
-         sys.stdout.write('New version 1.0\n')
+         sys.stdout.write('New version with IA 1.1\n')
          sys.stdout.flush()
          sys.stdout.write('Check the current version at https://github.com/Nelux1/Neluxmatizer.git\n')
          sys.stdout.flush()
     if args.url:
          url.append(str(args.url))                
     if args.usedlist:
-         # Expandir ruta del usuario y verificar existencia del archivo
+         # Expand user path and verify file existence
          list_path = os.path.expanduser(args.usedlist)
          if not os.path.exists(list_path):
-             sys.stdout.write(f'{Fore.RED}[!] Error: No se encontró el archivo: {args.usedlist}{Fore.RESET}\n')
-             sys.stdout.write(f'{Fore.YELLOW}[!] Ruta buscada: {os.path.abspath(list_path)}{Fore.RESET}\n')
+             sys.stdout.write(f'{Fore.RED}[!] Error: File not found: {args.usedlist}{Fore.RESET}\n')
+             sys.stdout.write(f'{Fore.YELLOW}[!] Searched path: {os.path.abspath(list_path)}{Fore.RESET}\n')
              sys.stdout.flush()
              sys.exit(1)
+         
+         # Read all URLs from file
+         all_urls_from_file = []
          with open(list_path, "r") as f:
              for q in f.readlines():
                  q = q.strip()
                  if q == "" or q.startswith("#"):
                      continue
-                 url.append(q)
+                 all_urls_from_file.append(q)
+         
+         # 🔄 CHECKPOINT SYSTEM - Will be initialized after processing all flags
+         # For now, save all URLs and process them later
+         url.extend(all_urls_from_file)
     if args.threads:
          threads = int(args.threads)                  
     if args.cors:
@@ -220,12 +229,12 @@ def selector():
                     r = False
            if "lfi" in exceptions:
                     l = False
-    # Si NO se especificó -a (all), pero SÍ se especificó -E, activar solo esas vulnerabilidades
-    # NOTA: -E se usa para EXCLUIR cuando se combina con -a, NO para activar individualmente
-    # Para activar individualmente se usan los parámetros específicos: -click, -xss, -sql, etc.
+    # If -a (all) was NOT specified, but -E WAS specified, activate only those vulnerabilities
+    # NOTE: -E is used to EXCLUDE when combined with -a, NOT to activate individually
+    # To activate individually, use specific parameters: -click, -xss, -sql, etc.
     elif args.exceptions and not args.all:
-        # Si solo se especificó -E sin -a, NO hacer nada (mantener estado por defecto)
-        # El usuario debe usar parámetros específicos como -click, -xss, etc.
+        # If only -E was specified without -a, do nothing (maintain default state)
+        # User must use specific parameters like -click, -xss, etc.
         pass 
     if args.output:
          fname= os.path.join(args.output)
@@ -235,15 +244,89 @@ def selector():
     if args.sql and not args.word:
          s=True         
     if args.lfi and not args.word:
-         l=True                                       
+         l=True
+    
+    # 🔄 CHECKPOINT SYSTEM - Initialize and verify checkpoint after processing all flags
+    if args.usedlist:
+        try:
+            from parametizer.checkpoint_manager import CheckpointManager
+            
+            # Create complete scan parameters to identify the checkpoint
+            scan_params_final = {
+                'cors': c,
+                'click': cl,
+                'crlf': cr,
+                'xss': x,
+                'xxe': xe,
+                'lfi': l,
+                'sql': s,
+                'redirect': r,
+                'rce': rc,
+                'ssrf': sr,
+                'ssti': sst,
+                'threads': threads,
+                'wordlist': args.word if args.word else None,
+                'oob_domain': args.oob_domain if args.oob_domain else None,
+                'poc': args.poc if args.poc else False
+            }
+            
+            list_path = os.path.expanduser(args.usedlist)
+            checkpoint_manager = CheckpointManager()
+            checkpoint_id = checkpoint_manager._generate_checkpoint_id(list_path, scan_params_final)
+            
+            # Check if checkpoint exists and load processed URLs
+            if checkpoint_manager.checkpoint_exists(checkpoint_id):
+                processed_urls_from_checkpoint = checkpoint_manager.get_processed_urls(checkpoint_id)
+                
+                if processed_urls_from_checkpoint:
+                    sys.stdout.write(f'\n{Fore.YELLOW}[🔄] Checkpoint found: {len(processed_urls_from_checkpoint)} URLs already processed{Fore.RESET}\n')
+                    sys.stdout.flush()
+                    
+                    # Filter pending URLs
+                    pending_urls = checkpoint_manager.filter_pending_urls(url, processed_urls_from_checkpoint)
+                    
+                    if pending_urls:
+                        sys.stdout.write(f'{Fore.GREEN}[+] Resuming scan: {len(pending_urls)} pending URLs out of {len(url)} total{Fore.RESET}\n')
+                        sys.stdout.flush()
+                        url = pending_urls  # Replace list with pending URLs
+                    else:
+                        sys.stdout.write(f'{Fore.GREEN}[✅] All URLs have been processed. Deleting checkpoint...{Fore.RESET}\n')
+                        sys.stdout.flush()
+                        checkpoint_manager.delete_checkpoint(checkpoint_id)
+                        sys.exit(0)
+                else:
+                    # Empty or corrupted checkpoint, continue with all URLs
+                    sys.stdout.write(f'{Fore.YELLOW}[ℹ️] Checkpoint found but empty - starting full scan{Fore.RESET}\n')
+                    sys.stdout.flush()
+            else:
+                # No checkpoint, continue with all URLs
+                sys.stdout.write(f'{Fore.GREEN}[ℹ️] No checkpoint found - starting scan from the beginning{Fore.RESET}\n')
+                sys.stdout.flush()
+                
+        except ImportError:
+            # If checkpoint manager cannot be imported, continue without checkpoint
+            sys.stdout.write(f'{Fore.YELLOW}[⚠️] Checkpoint manager not available - continuing without progress saving{Fore.RESET}\n')
+            sys.stdout.flush()
+            checkpoint_manager = None
+            checkpoint_id = None
+        except Exception as e:
+            # Error initializing checkpoint, continue without it
+            sys.stdout.write(f'{Fore.YELLOW}[⚠️] Error initializing checkpoint: {e} - continuing without progress saving{Fore.RESET}\n')
+            sys.stdout.flush()
+            checkpoint_manager = None
+            checkpoint_id = None
+    else:
+        checkpoint_manager = None
+        checkpoint_id = None
+                                       
     if not args.word:        
-      all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth)     
+      all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id)     
     if args.word:
-         # Expandir ruta del usuario y verificar existencia del archivo
+         # Expand user path and verify file existence
          wordlist_path = os.path.expanduser(args.word)
          if not os.path.exists(wordlist_path):
-             sys.stdout.write(f'{Fore.RED}[!] Error: No se encontró el archivo de wordlist: {args.word}{Fore.RESET}\n')
-             sys.stdout.write(f'{Fore.YELLOW}[!] Ruta buscada: {os.path.abspath(wordlist_path)}{Fore.RESET}\n')
+             sys.stdout.write(f'{Fore.RED}[!] Error: Wordlist file not found: {args.word}{Fore.RESET}\n')
+             sys.stdout.write(f'{Fore.YELLOW}[!] Searched path: {os.path.abspath(wordlist_path)}{Fore.RESET}\n')
              sys.stdout.flush()
              sys.exit(1)
          with open(wordlist_path, "r") as f:
@@ -254,13 +337,13 @@ def selector():
                  wordlist.append(i)             
          if args.xss:
            x=True                        
-           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth)
+           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id)
          if args.lfi:
            l=True
-           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth)     
+           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id)     
          if args.sql:
            s=True
-           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth)
+           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id)
          if args.output:
            save_output(urls_vulnerables,fname,l)
      
@@ -280,7 +363,7 @@ if __name__ == "__main__":
     try:
         selector()
     except KeyboardInterrupt:
-        sys.stdout.write(f"\n{Fore.YELLOW}[!] Programa interrumpido{Fore.RESET}\n")
+        sys.stdout.write(f"\n{Fore.YELLOW}[!] Program interrupted{Fore.RESET}\n")
         sys.stdout.flush()
         exit(0)
 

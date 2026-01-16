@@ -48,6 +48,7 @@ Thumbs.db
 # Project specific
 output/poc/*.html
 output/*.txt
+output/.checkpoints/
 reports/
 *.jks
 *.pem

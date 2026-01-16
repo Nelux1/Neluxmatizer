@@ -23,11 +23,11 @@ class PoCGenerator:
         self.max_workers = max_workers
         self.screenshot_timeout = screenshot_timeout
         
-        # Crear directorios solo si no existen
+        # Create directories only if they don't exist
         os.makedirs(self.poc_dir, exist_ok=True)
-        # NO crear screenshots_dir automáticamente
+        # DO NOT create screenshots_dir automatically
         
-        # Inicializar pool de drivers solo si se necesita
+        # Initialize driver pool only if needed
         self.driver_pool = []
         self.driver_lock = threading.Lock()
         
@@ -40,59 +40,59 @@ class PoCGenerator:
         self.chrome_options.add_argument('--start-maximized')
     
     def _escape_url_for_js(self, url):
-        """Escapa una URL para uso seguro en JavaScript"""
+        """Escapes a URL for safe use in JavaScript"""
         import html
-        # Escapar caracteres HTML y JavaScript
+        # Escape HTML and JavaScript characters
         escaped = html.escape(url)
-        # Reemplazar comillas simples y dobles
+        # Replace single and double quotes
         escaped = escaped.replace("'", "\\'").replace('"', '\\"')
         return escaped
     
     def _generate_url_options(self, urls):
-        """Genera las opciones del dropdown para las URLs"""
+        """Generates dropdown options for URLs"""
         if not urls:
             return '<option value="">No URLs available</option>'
         
         options = []
         for i, url in enumerate(urls):
             escaped_url = self._escape_url_for_js(url)
-            # Truncar URL para mostrar en el dropdown
+            # Truncate URL to display in dropdown
             display_url = url[:60] + "..." if len(url) > 60 else url
             options.append(f'<option value="{escaped_url}">{display_url}</option>')
         
         return '\n'.join(options)
     
     def _init_driver_pool(self):
-        """Inicializa un pool de drivers de Chrome para paralelización"""
+        """Initializes a pool of Chrome drivers for parallelization"""
         try:
             for _ in range(self.max_workers):
                 driver = webdriver.Chrome(options=self.chrome_options)
                 driver.set_page_load_timeout(self.screenshot_timeout)
                 driver.implicitly_wait(5)
                 self.driver_pool.append(driver)
-            sys.stdout.write(f"✅ Pool de {self.max_workers} drivers inicializado\n")
+            sys.stdout.write(f"✅ Pool of {self.max_workers} drivers initialized\n")
             sys.stdout.flush()
         except Exception as e:
-            sys.stdout.write(f"⚠️ Error inicializando drivers: {e}\n")
+            sys.stdout.write(f"⚠️ Error initializing drivers: {e}\n")
             sys.stdout.flush()
-            sys.stdout.write("💡 Continuando con generación de PoCs sin screenshots...\n")
+            sys.stdout.write("💡 Continuing with PoC generation without screenshots...\n")
             sys.stdout.flush()
     
     def _get_driver(self):
-        """Obtiene un driver disponible del pool"""
+        """Gets an available driver from the pool"""
         with self.driver_lock:
             if self.driver_pool:
                 return self.driver_pool.pop()
             return None
     
     def _return_driver(self, driver):
-        """Devuelve un driver al pool"""
+        """Returns a driver to the pool"""
         try:
             driver.delete_all_cookies()
             with self.driver_lock:
                 self.driver_pool.append(driver)
         except:
-            pass  # Si falla, simplemente descartamos el driver
+            pass  # If it fails, simply discard the driver
     
     def generate_pocs_batch(self, vulnerabilities, target_url):
         """Genera PoCs en paralelo para múltiples vulnerabilidades"""
@@ -102,7 +102,7 @@ class PoCGenerator:
         sys.stdout.write(f"\n🚀 Generando {len(vulnerabilities)} PoCs en paralelo...\n")
         sys.stdout.flush()
         
-        # Crear tareas para ejecución paralela
+        # Create tasks for parallel execution
         tasks = []
         for vuln in vulnerabilities:
             if isinstance(vuln, str) and vuln.startswith('[VULNERABLE'):
@@ -111,11 +111,11 @@ class PoCGenerator:
                     tasks.append(task)
         
         if not tasks:
-            sys.stdout.write("ℹ️ No se encontraron vulnerabilidades compatibles para PoC\n")
+            sys.stdout.write("ℹ️ No compatible vulnerabilities found for PoC\n")
             sys.stdout.flush()
             return []
         
-        # Ejecutar en paralelo con barra de progreso
+        # Execute in parallel with progress bar
         results = []
         with tqdm(total=len(tasks), desc="Generando PoCs", unit="PoC") as pbar:
             with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -206,7 +206,7 @@ class PoCGenerator:
                     'type': 'CRLF'
                 }
             elif "VULNERABLE TO CORS" in vuln:
-                # Extraer la URL correctamente para vulnerabilidades CORS
+                # Extract URL correctly for CORS vulnerabilities
                 if '[GET]' in vuln:
                     url = vuln.replace('[VULNERABLE TO CORS] [GET] ', '').strip()
                 elif '[POST]' in vuln:
@@ -216,7 +216,7 @@ class PoCGenerator:
                 else:
                     url = vuln.replace('[VULNERABLE TO CORS] ', '').strip()
                 
-                # Limpiar la URL de cualquier prefijo restante
+                # Clean URL of any remaining prefix
                 url = url.replace('[GET] ', '').replace('[POST] ', '').replace('[FORM] ', '')
                 
                 return {
@@ -238,7 +238,7 @@ class PoCGenerator:
         return None
     
     def _extract_vuln_info(self, vuln, vuln_type):
-        """Extrae información de la vulnerabilidad (método, URL, form_data)"""
+        """Extracts vulnerability information (method, URL, form_data)"""
         try:
             method = "GET"  # Default
             url = ""
@@ -246,7 +246,7 @@ class PoCGenerator:
             
             if '[FORM]' in vuln:
                 method = "POST"
-                # Extraer la URL correctamente para vulnerabilidades de formulario
+                # Extract URL correctly for form vulnerabilities
                 url_part = vuln.replace(f'[VULNERABLE TO {vuln_type}] [FORM] ', '')
                 if ' => ' in url_part:
                     url = url_part.split(' => ')[0].strip()
@@ -267,7 +267,7 @@ class PoCGenerator:
             else:
                 url = vuln.replace(f'[VULNERABLE TO {vuln_type}] ', '').strip()
             
-            # Limpiar la URL de caracteres problemáticos para JavaScript
+            # Clean URL of problematic characters for JavaScript
             url = url.replace("'", "\\'").replace('"', '\\"')
             
             return method, url, form_data
@@ -277,7 +277,7 @@ class PoCGenerator:
             return "GET", "", {}
     
     def cleanup(self):
-        """Limpia los drivers del pool"""
+        """Cleans up drivers from the pool"""
         for driver in self.driver_pool:
             try:
                 driver.quit()
@@ -286,14 +286,14 @@ class PoCGenerator:
         self.driver_pool.clear()
 
     def _capture_url_screenshot(self, url, filename, headless=True):
-        """Captura screenshot de una URL específica"""
-        # Solo crear carpeta screenshots si se necesita
+        """Captures screenshot of a specific URL"""
+        # Only create screenshots folder if needed
         if not os.path.exists(self.screenshots_dir):
             os.makedirs(self.screenshots_dir, exist_ok=True)
             
         driver = None
         try:
-            # Configurar opciones según el tipo de captura
+            # Configure options according to capture type
             options = webdriver.ChromeOptions()
             options.add_argument('--no-sandbox')
             options.add_argument('--disable-dev-shm-usage')
@@ -307,54 +307,54 @@ class PoCGenerator:
             driver = webdriver.Chrome(options=options)
             driver.set_page_load_timeout(self.screenshot_timeout)
             
-            # Navegar a la URL
+            # Navigate to URL
             driver.get(url)
-            time.sleep(2)  # Esperar a que cargue
+            time.sleep(2)  # Wait for it to load
             
-            # Scroll al top para mostrar URL bar
+            # Scroll to top to show URL bar
             driver.execute_script("window.scrollTo(0, 0);")
             
-            # Capturar screenshot
+            # Capture screenshot
             screenshot_path = os.path.join(self.screenshots_dir, filename)
             driver.save_screenshot(screenshot_path)
             
             return screenshot_path
             
         except Exception as e:
-            sys.stdout.write(f"❌ Error capturando screenshot: {e}\n")
+            sys.stdout.write(f"❌ Error capturing screenshot: {e}\n")
             sys.stdout.flush()
-            # Crear screenshot de fallback
+            # Create fallback screenshot
             return self._create_fallback_screenshot(filename, url, str(e))
         finally:
             if driver:
                 driver.quit()
     
     def _create_fallback_screenshot(self, filename, url="", error_msg="Screenshot failed"):
-        """Crea un screenshot básico cuando falla la captura real"""
+        """Creates a basic screenshot when real capture fails"""
         try:
             from PIL import Image, ImageDraw, ImageFont
             
-            # Solo crear carpeta screenshots si se necesita
+            # Only create screenshots folder if needed
             if not os.path.exists(self.screenshots_dir):
                 os.makedirs(self.screenshots_dir, exist_ok=True)
             
             screenshot_path = os.path.join(self.screenshots_dir, filename)
             
-            # Crear imagen básica
+            # Create basic image
             img = Image.new('RGB', (800, 600), color='white')
             draw = ImageDraw.Draw(img)
             
-            # Agregar texto informativo
+            # Add informative text
             draw.text((50, 50), f"URL: {url[:100] if url else 'N/A'}...", fill='black')
             draw.text((50, 100), f"Error: {error_msg[:100]}...", fill='red')
-            draw.text((50, 150), "Screenshot falló - PoC HTML generado correctamente", fill='blue')
+            draw.text((50, 150), "Screenshot failed - PoC HTML generated correctly", fill='blue')
             
             img.save(screenshot_path)
             return screenshot_path
         except Exception as e:
-            sys.stdout.write(f"⚠️ Error creando screenshot de fallback: {e}\n")
+            sys.stdout.write(f"⚠️ Error creating fallback screenshot: {e}\n")
             sys.stdout.flush()
-            # Si todo falla, crear archivo vacío
+            # If everything fails, create empty file
             try:
                 if not os.path.exists(self.screenshots_dir):
                     os.makedirs(self.screenshots_dir, exist_ok=True)
@@ -369,24 +369,24 @@ class PoCGenerator:
         """Genera PoC para Clickjacking con múltiples URLs vulnerables"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # Usar el dominio proporcionado o extraer de la primera URL
+        # Use provided domain or extract from first URL
         if domain:
             base_domain = domain
         else:
-            # Extraer el dominio base de la primera URL
+            # Extract base domain from first URL
             from urllib.parse import urlparse
             if vulnerable_urls:
                 base_domain = urlparse(vulnerable_urls[0]).netloc
             else:
                 base_domain = "unknown"
         
-        # Limpiar el dominio para usar en el nombre del archivo
+        # Clean domain to use in filename
         clean_domain = base_domain.replace(':', '_').replace('/', '_').replace('\\', '_')
         
-        # Crear nombre de archivo basado en el dominio
+        # Create filename based on domain
         html_filename = f"{clean_domain}_clickjacking.html"
         
-        # Procesar las URLs vulnerables
+        # Process vulnerable URLs
         import json
         vuln_data = []
         for i, vuln_url in enumerate(vulnerable_urls):
@@ -398,7 +398,7 @@ class PoCGenerator:
                 'form_data': None
             })
         
-        # Generar opciones del dropdown
+        # Generate dropdown options
         dropdown_options = []
         for vuln in vuln_data:
             display_url = vuln['url'][:60] + "..." if len(vuln['url']) > 60 else vuln['url']
@@ -887,7 +887,7 @@ class PoCGenerator:
                 'form_data': None
             })
         
-        # Generar opciones del dropdown
+        # Generate dropdown options
         dropdown_options = []
         for vuln in vuln_data:
             display_url = vuln['url'][:60] + "..." if len(vuln['url']) > 60 else vuln['url']
@@ -1492,7 +1492,7 @@ class PoCGenerator:
                 'form_data': encoded_form_data
             })
         
-        # Generar opciones del dropdown (sanitizadas)
+        # Generate dropdown options (sanitizadas)
         dropdown_options = []
         for vuln in vuln_data:
             display_url = vuln['url'][:60] + "..." if len(vuln['url']) > 60 else vuln['url']
@@ -1789,7 +1789,7 @@ class PoCGenerator:
                 'payload': payload
             })
         
-        # Generar opciones del dropdown
+        # Generate dropdown options
         dropdown_options = []
         for vuln in vuln_data:
             display_url = vuln['url'][:60] + "..." if len(vuln['url']) > 60 else vuln['url']
@@ -2337,7 +2337,7 @@ class PoCGenerator:
                 'form_data': form_data
             })
         
-        # Generar opciones del dropdown
+        # Generate dropdown options
         dropdown_options = []
         for vuln in vuln_data:
             display_url = vuln['url'][:60] + "..." if len(vuln['url']) > 60 else vuln['url']
@@ -3128,7 +3128,7 @@ class PoCGenerator:
                 'payload_urls': payload_urls
             })
         
-        # Generar opciones del dropdown para URLs vulnerables
+        # Generate dropdown options para URLs vulnerables
         dropdown_options = []
         for vuln in vuln_data:
             display_url = vuln['url'][:60] + "..." if len(vuln['url']) > 60 else vuln['url']
@@ -3507,7 +3507,7 @@ class PoCGenerator:
                 'form_data': form_data
             })
         
-        # Generar opciones del dropdown
+        # Generate dropdown options
         dropdown_options = []
         for vuln in vuln_data:
             display_url = vuln['url'][:60] + "..." if len(vuln['url']) > 60 else vuln['url']
@@ -3786,7 +3786,7 @@ class PoCGenerator:
                 'form_data': form_data
             })
         
-        # Generar opciones del dropdown
+        # Generate dropdown options
         dropdown_options = []
         for vuln in vuln_data:
             display_url = vuln['url'][:60] + "..." if len(vuln['url']) > 60 else vuln['url']
