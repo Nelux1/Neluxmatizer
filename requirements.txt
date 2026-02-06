@@ -67,3 +67,4 @@ Pillow>=8.3.0
 #
 # For full installation with PoC generation:
 # pip3 install requests beautifulsoup4 colorama urllib3 lxml tqdm selenium webdriver-manager Pillow
+zipp>=3.19.1 # not directly required, pinned by Snyk to avoid a vulnerability
