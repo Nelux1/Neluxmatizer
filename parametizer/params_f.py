@@ -6,7 +6,7 @@ from urllib.parse import urlparse, parse_qs
 from colorama import Cursor, ansi
 from concurrent.futures import ThreadPoolExecutor
 import sys
-from parametizer.progress import update_progress
+from parametizer.progress import update_progress, fmt_line
 import urllib3
 import warnings
 import random
@@ -138,7 +138,9 @@ def parametizer_forms(urls, output_file=None, threads=50):
     # Limpiar la línea final completamente (ANSI clear line)
     with stdout_lock:
         sys.stdout.write('\r\x1b[2K')
-        sys.stdout.write(f"\033[1;36m[+]\033[0m Total form URLs found: {len(form_urls)}\n")
+        sys.stdout.write(
+            fmt_line("1;36", "[+] Total form URLs found:", str(len(form_urls))) + "\n"
+        )
         sys.stdout.flush()
 
     if output_file:

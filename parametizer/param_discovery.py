@@ -350,19 +350,8 @@ class ParameterDiscovery:
         sys.stdout.write(f"\r\033[K")
         sys.stdout.flush()
         
-        # Show final results
-        if self.discovered_params:
-            sys.stdout.write(f"✅ Parameter discovery completed! Found {len(self.discovered_params)} valid parameters\n")
-            # Show some of the discovered parameters
-            param_names = [p['parameter'] for p in self.discovered_params[:5]]
-            if len(self.discovered_params) > 5:
-                param_names.append(f"... and {len(self.discovered_params) - 5} more")
-            sys.stdout.write(f"📋 Discovered parameters: {', '.join(param_names)}\n")
-            sys.stdout.flush()
-        else:
-            sys.stdout.write(f"⚠️ No additional parameters discovered\n")
-            sys.stdout.flush()
-        
+        # Resumen en pantalla lo hace scan_lista (totales + discovery)
+
         return self.discovered_params
     
     def generate_attack_urls(self) -> List[str]:

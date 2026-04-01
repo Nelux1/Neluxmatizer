@@ -279,7 +279,7 @@ def selector():
                 processed_urls_from_checkpoint = checkpoint_manager.get_processed_urls(checkpoint_id)
                 
                 if processed_urls_from_checkpoint:
-                    sys.stdout.write(f'\n{Fore.YELLOW}[🔄] Checkpoint found: {len(processed_urls_from_checkpoint)} URLs already processed{Fore.RESET}\n')
+                    sys.stdout.write(f'\n{Fore.YELLOW}🔄 Checkpoint found: {len(processed_urls_from_checkpoint)} URLs already processed{Fore.RESET}\n')
                     sys.stdout.flush()
                     
                     # Filter pending URLs
@@ -290,17 +290,17 @@ def selector():
                         sys.stdout.flush()
                         url = pending_urls  # Replace list with pending URLs
                     else:
-                        sys.stdout.write(f'{Fore.GREEN}[✅] All URLs have been processed. Deleting checkpoint...{Fore.RESET}\n')
+                        sys.stdout.write(f'{Fore.GREEN}✅ All URLs have been processed. Deleting checkpoint...{Fore.RESET}\n')
                         sys.stdout.flush()
                         checkpoint_manager.delete_checkpoint(checkpoint_id)
                         sys.exit(0)
                 else:
                     # Empty or corrupted checkpoint, continue with all URLs
-                    sys.stdout.write(f'{Fore.YELLOW}[ℹ️] Checkpoint found but empty - starting full scan{Fore.RESET}\n')
+                    sys.stdout.write(f'{Fore.YELLOW}[-] Checkpoint found but empty - starting full scan{Fore.RESET}\n')
                     sys.stdout.flush()
             else:
                 # No checkpoint, continue with all URLs
-                sys.stdout.write(f'{Fore.GREEN}[ℹ️] No checkpoint found - starting scan from the beginning{Fore.RESET}\n')
+                sys.stdout.write(f'{Fore.GREEN}[-] No checkpoint found - starting scan from the beginning{Fore.RESET}\n')
                 sys.stdout.flush()
                 
         except ImportError:

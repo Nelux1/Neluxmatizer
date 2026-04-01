@@ -11,6 +11,7 @@ from scanners.scan_xss import xss
 from scanners.scan_sqli import sqli
 from scanners.scan_rce import rce
 from parametizer.params import parametizer
+from parametizer.progress import fmt_line
 from parametizer.params_p import parametizer_params
 from parametizer.params_f import parametizer_forms
 import sys
@@ -237,7 +238,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
         try:
             processed_urls_from_checkpoint = checkpoint_manager.get_processed_urls(checkpoint_id)
             if processed_urls_from_checkpoint:
-                sys.stdout.write(f'\033[1;36m[🔄] Active checkpoint: {len(processed_urls_from_checkpoint)} URLs already processed previously\033[0m\n')
+                sys.stdout.write(f'\033[1;36m🔄 Active checkpoint: {len(processed_urls_from_checkpoint)} URLs already processed previously\033[0m\n')
                 sys.stdout.flush()
         except Exception as e:
             sys.stdout.write(f'\033[1;33m[⚠️] Error loading checkpoint: {e}\033[0m\n')
@@ -335,11 +336,11 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
                             }
                         }
                         checkpoint_manager.save_checkpoint(checkpoint_id, checkpoint_data)
-                        sys.stdout.write(f'\033[1;32m[💾] Progress saved: {len(processed_urls_from_checkpoint)} URLs processed before interruption\033[0m\n')
-                        sys.stdout.write(f'\033[1;36m[ℹ️] To resume, run the same command again\033[0m\n')
+                        sys.stdout.write(f'\033[1;32m💾 Progress saved: {len(processed_urls_from_checkpoint)} URLs processed before interruption\033[0m\n')
+                        sys.stdout.write(f'\033[1;36mℹ️ To resume, run the same command again\033[0m\n')
                         sys.stdout.flush()
                     except Exception as e:
-                        sys.stdout.write(f'\033[1;33m[⚠️] Error saving checkpoint: {e}\033[0m\n')
+                        sys.stdout.write(f'\033[1;33m⚠️ Error saving checkpoint: {e}\033[0m\n')
                         sys.stdout.flush()
                 
                 sys.exit(0)
@@ -347,7 +348,10 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             pass  # If no interruption module, continue
         
         processed_urls += 1
-        sys.stdout.write(f'\033[1;36m[+] Scanning {u} ({processed_urls}/{total_urls})\033[0m\n')
+        sys.stdout.write(
+            fmt_line("1;36", "[+] Scanning:", f"{u} ({processed_urls}/{total_urls})")
+            + "\n"
+        )
         sys.stdout.flush()
         
         # 🔐 AUTHENTICATION MANAGEMENT
@@ -391,8 +395,33 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             sys.stdout.flush()
         
         uri = parametizer(u, None, threads)
+
+        # Headless Chromium (Playwright): extra URLs after JS render — failures are non-fatal
+        try:
+            from parametizer.headless_crawl import run_headless_phase
+
+            hl_urls, hl_err = run_headless_phase(u, custom_headers, auth_manager)
+            if hl_err:
+                sys.stdout.write(f'\033[1;31m[!]\033[0m Headless crawl omitido: {hl_err}\n')
+                sys.stdout.flush()
+            elif hl_urls:
+                _before = len(uri)
+                uri = list(dict.fromkeys(list(uri) + hl_urls))
+                if len(uri) > _before:
+                    sys.stdout.write(
+                        fmt_line("1;36", "[+] Total URLs collected:", str(len(uri)))
+                        + "\n"
+                    )
+                    sys.stdout.flush()
+        except Exception as _hl_ex:
+            sys.stdout.write(
+                f'\033[1;31m[!]\033[0m Headless crawl omitido: {_hl_ex}\n'
+            )
+            sys.stdout.flush()
+
         urip = parametizer_params(uri, output_file=None)
         urif = parametizer_forms(uri, output_file=None, threads=threads)
+        urip_len_before_discovery = len(urip)
 
         # 🔍 ADVANCED PARAMETER DISCOVERY (Arjun-like)
         try:
@@ -424,8 +453,11 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
                 else:
                     urip = discovered_urls
                 
-                # Clear the previous line completely before printing
-                sys.stdout.write(f'\r\033[K\033[1;32m[+] Advanced discovery found {len(discovered_params)} parameters\033[0m\n')
+                added_param_urls = len(urip) - urip_len_before_discovery
+                sys.stdout.write(
+                    f'\r\033[K\033[1;32m[+] Advanced discovery found {len(discovered_params)} parameters — '
+                    f'Total unique param URLs: {len(urip)} (+{added_param_urls} desde discovery)\033[0m\n'
+                )
                 sys.stdout.flush()
             else:
                 sys.stdout.write(f'\033[1;33m[!] No additional parameters discovered\033[0m\n')
@@ -438,11 +470,16 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             sys.stdout.write(f'\033[1;33m[⚠️] Advanced parameter discovery error: {e} - continuing with basic discovery\033[0m\n')
             sys.stdout.flush()
 
-        if not urip and not urif:
+        has_param_surface = bool(urip or urif)
+        raw_collected = list(dict.fromkeys(uri)) if uri else []
+        # CORS / Clickjacking: responden por headers; usar todas las URLs recolectadas (no solo ?query=)
+        urip_cl = raw_collected if raw_collected else (urip or [])
+        urif_cl = urif or []
+
+        if not has_param_surface and not raw_collected:
             sys.stdout.write(f'\n\033[1;31m[-] No parameters found for {u}\033[0m\n')
             sys.stdout.flush()
-            
-            # Save to output file even if no parameters found
+
             if o:
                 try:
                     with open(fname, 'a', encoding='utf-8') as f:
@@ -456,13 +493,33 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
                 except Exception as e:
                     sys.stdout.write(f'\033[1;33m[⚠️] Warning: Could not write to output file: {e}\033[0m\n')
                     sys.stdout.flush()
-            
-            # 🔄 SAVE CHECKPOINT even when no parameters found
+
             save_checkpoint_for_url(u)
-            
             continue
 
-        sys.stdout.write(f'\033[1;36m[+] Found {len(urip)} URLs with parameters and {len(urif)} forms for {u}\033[0m\n')
+        if not has_param_surface and raw_collected and not (cl or c):
+            sys.stdout.write(f'\n\033[1;31m[-] No parameters found for {u}\033[0m\n')
+            sys.stdout.flush()
+
+            if o:
+                try:
+                    with open(fname, 'a', encoding='utf-8') as f:
+                        f.write(f"\n[SCAN RESULTS FOR: {u}]\n")
+                        f.write(f"[TIMESTAMP: {time.strftime('%Y-%m-%d %H:%M:%S')}]\n")
+                        f.write(f"[INFO] No GET params/forms; enable -cors and/or -click to probe headers on collected URLs\n")
+                        f.write(f"\n{'='*80}\n")
+                        f.write(f"SCAN COMPLETED FOR: {u}\n")
+                        f.write(f"TIMESTAMP: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        f.write(f"{'='*80}\n\n")
+                except Exception as e:
+                    sys.stdout.write(f'\033[1;33m[⚠️] Warning: Could not write to output file: {e}\033[0m\n')
+                    sys.stdout.flush()
+
+            save_checkpoint_for_url(u)
+            continue
+
+        if has_param_surface:
+            sys.stdout.write(f'\033[1;36m[+] Found {len(urip)} URLs with parameters and {len(urif)} forms for {u}\033[0m\n')
         sys.stdout.flush()
         print()
          
@@ -479,7 +536,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             scan_headers = custom_headers
             if auth_manager and auth_manager.is_authenticated():
                 scan_headers = auth_manager.get_session_headers(custom_headers)
-            clickjacking_vulns = clickjacking(urip, urif, [], threads, scan_headers, random_agent)
+            clickjacking_vulns = clickjacking(urip_cl, urif_cl, [], threads, scan_headers, random_agent)
             vulnerabilities_by_type['CLICKJACKING'].extend(clickjacking_vulns)
             urls_vulnerables.extend(clickjacking_vulns)
         
@@ -496,11 +553,11 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             scan_headers = custom_headers
             if auth_manager and auth_manager.is_authenticated():
                 scan_headers = auth_manager.get_session_headers(custom_headers)
-            cors_vulns = cors(urip, urif, [], threads, scan_headers, random_agent)
+            cors_vulns = cors(urip_cl, urif_cl, [], threads, scan_headers, random_agent)
             vulnerabilities_by_type['CORS'].extend(cors_vulns)
             urls_vulnerables.extend(cors_vulns)
 
-        if xe:
+        if xe and has_param_surface:
             # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
                 sys.stdout.write(f'\033[1;31m[🚨] Target {u} is blocked - skipping XXE scan\033[0m\n')
@@ -523,7 +580,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             vulnerabilities_by_type['XXE'].extend(xxe_vulns)
             urls_vulnerables.extend(xxe_vulns)
 
-        if x:
+        if x and has_param_surface:
             # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
                 sys.stdout.write(f'\033[1;31m[🚨] Target {u} is blocked - skipping XSS scan\033[0m\n')
@@ -541,7 +598,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             vulnerabilities_by_type['XSS'].extend(xss_vulns)
             urls_vulnerables.extend(xss_vulns)
 
-        if l:
+        if l and has_param_surface:
             # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
                 sys.stdout.write(f'\033[1;31m[🚨] Target {u} is blocked - skipping LFI scan\033[0m\n')
@@ -565,7 +622,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             vulnerabilities_by_type['LFI'].extend(lfi_vulns)
             urls_vulnerables.extend(lfi_vulns)
 
-        if s:
+        if s and has_param_surface:
             # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
                 sys.stdout.write(f'\033[1;31m[🚨] Target {u} is blocked - skipping SQLi scan\033[0m\n')
@@ -585,7 +642,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             vulnerabilities_by_type['SQLI'].extend(sqli_vulns)
             urls_vulnerables.extend(sqli_vulns)
 
-        if rc:
+        if rc and has_param_surface:
             # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
                 sys.stdout.write(f'\033[1;31m[🚨] Target {u} is blocked - skipping RCE scan\033[0m\n')
@@ -607,7 +664,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             vulnerabilities_by_type['RCE'].extend(rce_vulns)
             urls_vulnerables.extend(rce_vulns)
 
-        if sr:
+        if sr and has_param_surface:
             # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
                 sys.stdout.write(f'\033[1;31m[🚨] Target {u} is blocked - skipping SSRF scan\033[0m\n')
@@ -625,7 +682,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             vulnerabilities_by_type['SSRF'].extend(ssrf_vulns)
             urls_vulnerables.extend(ssrf_vulns)
 
-        if r:
+        if r and has_param_surface:
             # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
                 sys.stdout.write(f'\033[1;31m[🚨] Target {u} is blocked - skipping Redirect scan\033[0m\n')
@@ -646,7 +703,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             vulnerabilities_by_type['REDIRECT'].extend(redirect_vulns)
             urls_vulnerables.extend(redirect_vulns)
 
-        if sst:
+        if sst and has_param_surface:
             # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
                 sys.stdout.write(f'\033[1;31m[🚨] Target {u} is blocked - skipping SSTI scan\033[0m\n')
@@ -663,7 +720,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             vulnerabilities_by_type['SSTI'].extend(ssti_vulns)
             urls_vulnerables.extend(ssti_vulns)
 
-        if cr:
+        if cr and has_param_surface:
             # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
                 sys.stdout.write(f'\033[1;31m[🚨] Target {u} is blocked - skipping CRLF scan\033[0m\n')
@@ -821,7 +878,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
         
         # 🔄 SAVE CHECKPOINT after processing each URL
         save_checkpoint_for_url(u)
-        sys.stdout.write(f'\033[1;32m[💾] Progress saved: {processed_urls}/{total_urls} URLs processed\033[0m\n')
+        sys.stdout.write(f'\033[1;32m💾 Progress saved: {processed_urls}/{total_urls} URLs processed\033[0m\n')
         sys.stdout.flush()
         
         sys.stdout.write('\033[1;36m' + '='*80 + '\033[0m\n')

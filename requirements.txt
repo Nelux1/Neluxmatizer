@@ -19,6 +19,9 @@ tqdm>=4.62.0
 selenium>=4.0.0
 webdriver-manager>=3.8.0
 
+# Headless Chromium crawl (JS-rendered links) — run after install: playwright install chromium
+playwright>=1.40.0
+
 # Image processing for screenshots
 Pillow>=8.3.0
 

@@ -3,6 +3,14 @@ from colorama import init, Fore, Style,Cursor,ansi
 
 init()
 
+def fmt_line(color_code: str, prefix_to_colon: str, body: str) -> str:
+    """
+    prefix_to_colon: etiqueta hasta e incluyendo ':' en el color (ej. 1;36 cian, 1;32 verde).
+    body: texto después de ':' en blanco negrita.
+    """
+    return f"\033[{color_code}m{prefix_to_colon}\033[0m \033[1;37m{body}\033[0m"
+
+
 spinner = ['|', '/', '-', '\\']
 spinner_index = 0
 spinner_lock = threading.Lock()

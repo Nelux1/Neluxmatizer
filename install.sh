@@ -50,6 +50,17 @@ install_packages() {
     if [ -f "requirements.txt" ]; then
         $pip_cmd install --upgrade pip
         $pip_cmd install -r requirements.txt
+        echo ""
+        echo "🌐 Installing Chromium for Playwright (headless URL discovery)..."
+        python3 -m playwright install chromium || {
+            echo "⚠️  playwright install chromium failed — Neluxmatizer will warn at runtime and continue without headless crawl."
+        }
+        if command -v dpkg >/dev/null 2>&1 && dpkg -s python3-playwright >/dev/null 2>&1; then
+            echo ""
+            echo "⚠️  Tenés python3-playwright del APT y además pip instaló playwright."
+            echo "   Si ves KeyError: deviceDescriptors en el crawl headless, usá solo uno:"
+            echo "   sudo apt remove python3-playwright && pip install -U playwright && python3 -m playwright install chromium"
+        fi
         echo "✅ All dependencies installed successfully!"
     else
         echo "❌ requirements.txt not found in current directory"
@@ -146,9 +157,10 @@ case $choice in
         echo "📋 Manual installation instructions:"
         echo "1. Install Python 3.7+"
         echo "2. Install dependencies: pip3 install -r requirements.txt"
-        echo "3. Make executable: chmod +x neluxmatizer.py"
-        echo "4. Create directories: mkdir -p output/poc reports"
-        echo "5. Run: python3 neluxmatizer.py -h"
+        echo "3. Install browser: python3 -m playwright install chromium"
+        echo "4. Make executable: chmod +x neluxmatizer.py"
+        echo "5. Create directories: mkdir -p output/poc reports"
+        echo "6. Run: python3 neluxmatizer.py -h"
         make_executable
         create_directories
         ;;

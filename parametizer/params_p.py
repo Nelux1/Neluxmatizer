@@ -6,6 +6,8 @@ from urllib.parse import urlparse, parse_qs
 import urllib3
 import random
 
+from .progress import fmt_line
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 user_agents = [
@@ -49,7 +51,9 @@ def parametizer_params(urls, output_file=None):
             sys.stdout.write(f"[!] Error processing {url}: {e}\n")
             sys.stdout.flush()
 
-    sys.stdout.write(f"\033[1;36m[+]\033[0m Total unique param URLs: {len(results)}\n")
+    sys.stdout.write(
+        fmt_line("1;36", "[+] Total unique param URLs:", str(len(results))) + "\n"
+    )
     sys.stdout.flush()
 
     if output_file:

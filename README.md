@@ -27,6 +27,7 @@ A comprehensive web application security scanner with advanced WAF (Web Applicat
 - **CORS Misconfiguration**: Cross-Origin Resource Sharing testing
 
 ### 🔍 **Advanced Discovery**
+- **Headless Chromium (Playwright)**: After static discovery, loads the target in headless Chrome to collect same-site links rendered by JavaScript (uses `-C` / `-A` when set). On failure, the scan continues without it.
 - **Parameter Discovery**: Finds GET/POST parameters from multiple sources
 - **Form Discovery**: Automatically discovers and analyzes web forms
 - **JavaScript Analysis**: Extracts parameters from client-side code
@@ -74,8 +75,12 @@ cd neluxmatizer
 
 # Or install manually
 pip3 install -r requirements.txt
+# Browser for headless URL discovery (JS-rendered links); scan continues if this fails
+playwright install chromium
 chmod +x neluxmatizer.py
 ```
+
+If `playwright install chromium` is skipped or fails, Neluxmatizer prints a **red** warning and continues **without** headless discovery (Wayback, forms, and parameter fuzzing still run).
 
 ### Installation Options
 
