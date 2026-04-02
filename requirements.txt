@@ -2,8 +2,8 @@
 # Requirements file for Python dependencies
 
 # Core HTTP and web libraries
-requests>=2.25.1
-urllib3>=1.26.5
+requests>=2.32.4
+urllib3>=2.6.0
 
 # HTML/XML parsing and web scraping
 beautifulsoup4>=4.9.3
@@ -16,14 +16,14 @@ colorama>=0.4.4
 tqdm>=4.62.0
 
 # Web automation and screenshot capture
-selenium>=4.0.0
+selenium>=4.15.1
 webdriver-manager>=3.8.0
 
 # Headless Chromium crawl (JS-rendered links) — run after install: playwright install chromium
 playwright>=1.40.0
 
 # Image processing for screenshots
-Pillow>=8.3.0
+Pillow>=10.3.0
 
 # Concurrency and threading (built-in with Python 3.2+)
 # concurrent.futures is part of the standard library
@@ -70,3 +70,5 @@ Pillow>=8.3.0
 #
 # For full installation with PoC generation:
 # pip3 install requests beautifulsoup4 colorama urllib3 lxml tqdm selenium webdriver-manager Pillow
+h11>=0.16.0 # not directly required, pinned by Snyk to avoid a vulnerability
+zipp>=3.19.1 # not directly required, pinned by Snyk to avoid a vulnerability
