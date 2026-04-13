@@ -144,15 +144,15 @@ def headless_collect_urls(
     headers: Optional[Dict[str, str]] = None,
     cookies_dict: Optional[Dict[str, str]] = None,
     max_urls: int = 800,
-    goto_timeout_ms: int = 45000,
-    max_depth: int = 3,
-    max_pages: int = 100,
+    goto_timeout_ms: int = 15000,
+    max_depth: int = 2,
+    max_pages: int = 25,
 ) -> Tuple[List[str], Optional[str]]:
     """
     Headless Chromium: crawl BFS por mismo host (estilo Katana acotado).
 
     - max_depth: saltos desde la semilla (0 = solo la primera página).
-    - max_pages: tope de navegaciones GET (evita escaneos eternos en blogs enormes).
+    - max_pages: tope de navegaciones GET (25 por defecto; más rápido que antes; subí si hace falta).
 
     Returns:
         (list_of_urls, None) on success (list may be empty),
@@ -236,6 +236,10 @@ def headless_collect_urls(
 
                     page = context.new_page()
                     pages_done = 0
+                    # Tras domcontentloaded: breve pausa para JS (sin networkidle: en muchos sitios
+                    # nunca “termina” la red → Katana/velocidad: evitar esperar idle de 8s+ por página).
+
+                    # No imprimir aquí en stdout: scan_lista muestra un spinner mientras corre esto.
 
                     while queue and pages_done < max_pages and len(collected) < max_urls:
                         current, depth = queue.popleft()
@@ -257,11 +261,7 @@ def headless_collect_urls(
                         remember(current)
 
                         try:
-                            page.wait_for_load_state("networkidle", timeout=12000)
-                        except Exception:
-                            pass
-                        try:
-                            page.wait_for_timeout(1200)
+                            page.wait_for_timeout(400)
                         except Exception:
                             pass
 

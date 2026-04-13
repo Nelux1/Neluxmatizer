@@ -22,7 +22,11 @@ class CheckpointManager:
             checkpoint_dir: Directory where checkpoints are saved (default: output/.checkpoints)
         """
         if checkpoint_dir is None:
-            checkpoint_dir = os.path.join('output', '.checkpoints')
+            wd = os.environ.get("NELUXMATIZER_WORKDIR")
+            if wd:
+                checkpoint_dir = os.path.join(wd, "output", ".checkpoints")
+            else:
+                checkpoint_dir = os.path.join("output", ".checkpoints")
         
         self.checkpoint_dir = checkpoint_dir
         self._ensure_checkpoint_dir()

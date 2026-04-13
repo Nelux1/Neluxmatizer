@@ -27,6 +27,7 @@ A comprehensive web application security scanner with advanced WAF (Web Applicat
 - **CORS Misconfiguration**: Cross-Origin Resource Sharing testing
 
 ### 🔍 **Advanced Discovery**
+- **Direct endpoint list (`-param`)**: Feed a text file with one URL per line (from another tool). Skips Wayback, Common Crawl, crt.sh, crawling, headless Playwright, and Arjun-style parameter discovery; runs the selected vulnerability checks (`-a`, `-xss`, `-E`, etc.) against that list. Incompatible with `-u` / `-l`.
 - **Headless Chromium (Playwright)**: After static discovery, loads the target in headless Chrome to collect same-site links rendered by JavaScript (uses `-C` / `-A` when set). On failure, the scan continues without it.
 - **Parameter Discovery**: Finds GET/POST parameters from multiple sources
 - **Form Discovery**: Automatically discovers and analyzes web forms
@@ -67,16 +68,17 @@ pip3 --version
 ### Quick Installation
 ```bash
 # Clone or download the tool
-git clone <repository-url>
-cd neluxmatizer
+git clone https://github.com/Nelux1/Neluxmatizer.git
+cd Neluxmatizer
 
-# Run the installation script
+# Run the installation script (creates venv where needed, installs `neluxmatizer` on PATH)
+chmod +x install.sh
 ./install.sh
 
-# Or install manually
-pip3 install -r requirements.txt
-# Browser for headless URL discovery (JS-rendered links); scan continues if this fails
-playwright install chromium
+# Or install manually (prefer a venv on Debian/Kali — see below)
+python3 -m venv neluxmatizer_env && source neluxmatizer_env/bin/activate
+pip install -r requirements.txt
+python -m playwright install chromium
 chmod +x neluxmatizer.py
 ```
 
@@ -94,17 +96,22 @@ chmod +x install.sh
 ```
 
 The script offers 4 installation methods:
-1. **Global installation** (requires sudo) - Installs for all users
-2. **Virtual environment** (recommended) - Isolated Python environment
-3. **User directory** (no sudo) - Installs in `~/.local/`
-4. **Manual setup** - Shows instructions for manual installation
+1. **System command on PATH** (sudo only to copy the launcher) — Creates a **venv** in the project folder, then installs the `neluxmatizer` command (default: `/usr/local/bin`). On **Debian/Kali**, system-wide `pip` is blocked ([PEP 668](https://peps.python.org/pep-0668/)); this option does **not** use global pip. Override install location: `NELUXMATIZER_BINDIR=/usr/bin ./install.sh`
+2. **Virtual environment** (recommended, no sudo) — Venv + `neluxmatizer` in `~/.local/bin`
+3. **User pip** (`pip install --user`) — Dependencies in user site + `neluxmatizer` in `~/.local/bin` (may hit PEP 668 on some distros; use option 2 if it fails)
+4. **Manual setup** — Minimal steps + optional `neluxmatizer` in `~/.local/bin`
+
+After installation you can run **`neluxmatizer`** from any directory (ensure `~/.local/bin` or `/usr/local/bin` is on your `PATH`).
+
+**Working directory**: Lists (`-l`, `-param`/`-p`), wordlists (`-w`), `-o`, and the `output/` folder are resolved from the **current directory** when you start the tool (not from the clone path).
 
 The script automatically:
 - ✅ Checks Python version (requires 3.7+)
 - ✅ Verifies pip3 availability
 - ✅ Creates necessary directories (`output/poc`, `reports`)
 - ✅ Makes `neluxmatizer.py` executable
-- ✅ Installs all dependencies from `requirements.txt`
+- ✅ Installs dependencies from `requirements.txt` (inside the venv when using options 1 or 2)
+- ✅ Optionally installs the **`neluxmatizer`** shell command
 
 #### Option 2: Manual Installation
 ```bash
@@ -136,11 +143,14 @@ deactivate
 
 ### Quick Start
 ```bash
-# Basic usage
+# Basic usage (after install.sh — use the command name)
+neluxmatizer -u https://target.com
+
+# Same, calling the script directly from the repo
 python3 neluxmatizer.py -u https://target.com
 
-# Check help
-python3 neluxmatizer.py -h
+# Help
+neluxmatizer -h
 ```
 
 ## 📖 Usage Examples
@@ -153,11 +163,23 @@ python3 neluxmatizer.py -u https://example.com
 # Multiple URLs from file
 python3 neluxmatizer.py -l urls.txt
 
+# Endpoints file only (no crawl / discovery): run vuln flags on each line
+python3 neluxmatizer.py -param endpoints.txt -a -E click -poc -o endpoints-vulns.txt
+
 # Specific vulnerability scan
 python3 neluxmatizer.py -u https://example.com -xss -sql
 
 # Scan with custom wordlist
 python3 neluxmatizer.py -u https://example.com -xss -w custom_payloads.txt
+```
+
+### Direct endpoint list (`-param`)
+Use when you already have a list of full URLs (e.g. exported parameters/endpoints from another scanner). Neluxmatizer does **not** run parametizer, headless, or advanced parameter discovery; it uses each non-empty line as a target URL (lines starting with `#` are ignored). Do **not** combine with `-u` or `-l`. Lines without `http://` or `https://` get `https://` prepended.
+
+```bash
+python3 neluxmatizer.py -param endpoints.txt -a -E click -poc -o endpoints-vulns.txt -t 50
+# Equivalente:
+python3 neluxmatizer.py -p endpoints.txt -a -E click -poc -o endpoints-vulns.txt -t 50
 ```
 
 ### Advanced Scanning
@@ -207,6 +229,7 @@ python3 neluxmatizer.py -u https://example.com -xss -sql -lfi -rce -poc
 ### Basic Options
 - `-u, --url`: Target URL to scan
 - `-l, --list`: File containing list of URLs (supports `~` for home directory)
+- `-param` / `-p`: File with one endpoint URL per line; skips crawl, archives, headless, and parameter discovery (mutually exclusive with `-u` and `-l`)
 - `-t, --threads`: Number of threads (default: 30)
 - `-o, --output`: Output file for results
 - `-poc, --poc`: Generate Proof of Concept files (HTML + interactive demos)
@@ -424,7 +447,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## 📞 Support
 
-- **GitHub**: [Repository URL]
+- **GitHub**: [https://github.com/Nelux1/Neluxmatizer](https://github.com/Nelux1/Neluxmatizer)
 - **Issues**: Report bugs and feature requests via GitHub Issues
 - **Version**: Check current version with `python3 neluxmatizer.py -v`
 

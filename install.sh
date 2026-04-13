@@ -5,6 +5,9 @@
 
 set -e  # Exit on error
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR" || exit 1
+
 echo "🔍 Neluxmatizer - Advanced Web Vulnerability Scanner"
 echo "=================================================="
 echo ""
@@ -42,8 +45,11 @@ fi
 echo "✅ pip3 detected"
 
 # Function to install packages
+# $1 = pip invocation (e.g. "pip", "pip3 install --user", "sudo pip3" — deprecated on PEP 668 distros)
+# $2 = python binary for import tests and playwright (default: python3)
 install_packages() {
     local pip_cmd=$1
+    local py_verify="${2:-python3}"
     echo ""
     echo "📦 Installing dependencies from requirements.txt..."
     
@@ -51,8 +57,13 @@ install_packages() {
         $pip_cmd install --upgrade pip
         $pip_cmd install -r requirements.txt
         echo ""
+        echo "🔎 Verifying PoC stack (selenium, Pillow)..."
+        "$py_verify" -c "import selenium; import PIL; print('   ✅ selenium + Pillow import OK')" || {
+            echo "   ⚠️  selenium or Pillow import failed — run: pip install -r requirements.txt"
+        }
+        echo ""
         echo "🌐 Installing Chromium for Playwright (headless URL discovery)..."
-        python3 -m playwright install chromium || {
+        "$py_verify" -m playwright install chromium || {
             echo "⚠️  playwright install chromium failed — Neluxmatizer will warn at runtime and continue without headless crawl."
         }
         if command -v dpkg >/dev/null 2>&1 && dpkg -s python3-playwright >/dev/null 2>&1; then
@@ -80,14 +91,18 @@ create_venv() {
         exit 1
     fi
     
-    python3 -m venv neluxmatizer_env
-    echo "✅ Virtual environment created: neluxmatizer_env"
+    if [ -d neluxmatizer_env ]; then
+        echo "ℹ️  Ya existe neluxmatizer_env — se reutiliza y se actualizan dependencias."
+    else
+        python3 -m venv neluxmatizer_env
+        echo "✅ Virtual environment created: neluxmatizer_env"
+    fi
     
     # Activate and install
     echo ""
     echo "📦 Installing dependencies in virtual environment..."
     source neluxmatizer_env/bin/activate
-    install_packages "pip"
+    install_packages "pip" "${SCRIPT_DIR}/neluxmatizer_env/bin/python"
     deactivate
     
     echo ""
@@ -102,6 +117,59 @@ make_executable() {
     echo "✅ neluxmatizer.py is now executable"
 }
 
+# Install a shell launcher so the tool can be run as: neluxmatizer [args]
+# No hacemos cd al árbol de instalación: -p/-l/-o y output/ deben ser relativos al cwd del usuario.
+# Python pone el directorio del script en sys.path; los imports funcionan sin cd.
+# $1 = Python interpreter: command name (python3) or absolute path (venv/bin/python)
+# $2 = destination directory for the wrapper (e.g. /usr/local/bin or ~/.local/bin)
+# Override system bin dir: NELUXMATIZER_BINDIR=/usr/bin ./install.sh
+write_neluxmatizer_wrapper() {
+    local python_ref="$1"
+    local bin_dir="$2"
+    local install_root
+    install_root="$(readlink -f "$SCRIPT_DIR")"
+    local dest="${bin_dir%/}/neluxmatizer"
+    local tmp
+    tmp="$(mktemp)"
+
+    local python_abs
+    if [ -x "$python_ref" ]; then
+        python_abs="$(readlink -f "$python_ref" 2>/dev/null || echo "$python_ref")"
+    elif command -v "$python_ref" &>/dev/null; then
+        python_abs="$(command -v "$python_ref")"
+        python_abs="$(readlink -f "$python_abs" 2>/dev/null || echo "$python_abs")"
+    else
+        echo "❌ Intérprete Python no encontrado: $python_ref"
+        rm -f "$tmp"
+        return 1
+    fi
+
+    local py_q home_q
+    py_q=$(printf '%q' "$python_abs")
+    home_q=$(printf '%q' "$install_root")
+
+    cat > "$tmp" <<EOF
+#!/usr/bin/env bash
+# Neluxmatizer — generado por install.sh
+NELUXMATIZER_HOME=$home_q
+export NELUXMATIZER_HOME
+exec $py_q "\$NELUXMATIZER_HOME/neluxmatizer.py" "\$@"
+EOF
+    chmod +x "$tmp"
+    mkdir -p "$bin_dir"
+
+    if [[ "$bin_dir" == /usr/* ]] || [[ "$bin_dir" == /opt/* ]]; then
+        if [ "${EUID:-0}" -eq 0 ]; then
+            mv "$tmp" "$dest"
+        else
+            sudo mv "$tmp" "$dest"
+        fi
+    else
+        mv "$tmp" "$dest"
+    fi
+    echo "✅ Comando instalado: $dest"
+}
+
 # Function to create output directories
 create_directories() {
     echo ""
@@ -114,8 +182,8 @@ create_directories() {
 # Main installation
 echo ""
 echo "Choose installation method:"
-echo "1) Install globally (requires sudo)"
-echo "2) Create virtual environment (recommended)"
+echo "1) System command in PATH (venv + sudo solo para /usr/local/bin/neluxmatizer; Kali/Debian OK)"
+echo "2) Virtual environment + ~/.local/bin/neluxmatizer (recommended, no sudo)"
 echo "3) Install in user directory (no sudo required)"
 echo "4) Skip installation (manual setup)"
 echo ""
@@ -124,24 +192,34 @@ read -p "Enter your choice (1-4): " choice
 case $choice in
     1)
         echo ""
-        echo "⚠️  Installing globally (requires sudo privileges)..."
-        if [ "$EUID" -ne 0 ]; then
-            echo "   Requesting sudo privileges..."
-        fi
-        install_packages "sudo pip3"
+        echo "📌 PEP 668 (Kali/Debian): pip global al sistema está bloqueado."
+        echo "   Se crea neluxmatizer_env aquí y solo hace falta sudo para copiar el lanzador a PATH."
+        echo ""
+        create_venv
         make_executable
         create_directories
+        BINDIR="${NELUXMATIZER_BINDIR:-/usr/local/bin}"
+        echo ""
+        echo "📎 Instalando neluxmatizer en $BINDIR (sudo solo para este paso)"
+        if [ "$EUID" -ne 0 ]; then
+            echo "   Se pedirá la contraseña de sudo..."
+        fi
+        write_neluxmatizer_wrapper "${SCRIPT_DIR}/neluxmatizer_env/bin/python" "$BINDIR"
         ;;
     2)
         create_venv
         make_executable
         create_directories
         echo ""
-        echo "📋 Next steps:"
-        echo "1. Activate virtual environment: source neluxmatizer_env/bin/activate"
-        echo "2. Run the tool: python neluxmatizer.py -h"
+        echo "📎 Instalando comando neluxmatizer en ~/.local/bin (usa el Python del venv)"
+        mkdir -p "${HOME}/.local/bin"
+        write_neluxmatizer_wrapper "${SCRIPT_DIR}/neluxmatizer_env/bin/python" "${HOME}/.local/bin"
         echo ""
-        echo "To deactivate: deactivate"
+        echo "📋 Next steps:"
+        echo "1. Asegurate de tener ~/.local/bin en el PATH (ej.: export PATH=\"\$HOME/.local/bin:\$PATH\")"
+        echo "2. Ejecutá: neluxmatizer -h   (o activá el venv y usá python neluxmatizer.py como antes)"
+        echo ""
+        echo "To deactivate (si usás el venv a mano): deactivate"
         ;;
     3)
         echo ""
@@ -149,6 +227,10 @@ case $choice in
         install_packages "pip3 install --user"
         make_executable
         create_directories
+        echo ""
+        echo "📎 Instalando comando neluxmatizer en ~/.local/bin"
+        mkdir -p "${HOME}/.local/bin"
+        write_neluxmatizer_wrapper python3 "${HOME}/.local/bin"
         echo ""
         echo "⚠️  Note: You may need to add ~/.local/bin to your PATH"
         ;;
@@ -160,9 +242,13 @@ case $choice in
         echo "3. Install browser: python3 -m playwright install chromium"
         echo "4. Make executable: chmod +x neluxmatizer.py"
         echo "5. Create directories: mkdir -p output/poc reports"
-        echo "6. Run: python3 neluxmatizer.py -h"
+        echo "6. Run: neluxmatizer -h  (si instalaste el comando abajo) o python3 neluxmatizer.py -h"
         make_executable
         create_directories
+        echo ""
+        echo "📎 Instalando comando neluxmatizer en ~/.local/bin"
+        mkdir -p "${HOME}/.local/bin"
+        write_neluxmatizer_wrapper python3 "${HOME}/.local/bin"
         ;;
     *)
         echo "❌ Invalid choice. Exiting."
@@ -173,11 +259,11 @@ esac
 echo ""
 echo "🎉 Installation completed!"
 echo ""
-echo "📖 Quick start examples:"
-echo "  python3 neluxmatizer.py -u https://example.com -a -o results.txt -poc"
-echo "  python3 neluxmatizer.py -u https://example.com -xss -sqli -poc -t 100"
-echo "  python3 neluxmatizer.py -l urls.txt -ssrf -obd https://your-oob-domain.com -poc"
+echo "📖 Quick start (desde cualquier directorio, si neluxmatizer está en el PATH):"
+echo "  neluxmatizer -u https://example.com -a -o results.txt -poc"
+echo "  neluxmatizer -u https://example.com -xss -sqli -poc -t 100"
+echo "  neluxmatizer -l urls.txt -ssrf -obd https://your-oob-domain.com -poc"
 echo ""
-echo "📚 For more information, see README.md"
-echo "💡 Run 'python3 neluxmatizer.py -h' for all available options"
+echo "📚 Equivalente: python3 $SCRIPT_DIR/neluxmatizer.py ..."
+echo "💡 neluxmatizer -h  (o python3 neluxmatizer.py -h desde el directorio del proyecto)"
 echo ""

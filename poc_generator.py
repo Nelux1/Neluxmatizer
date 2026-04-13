@@ -3,12 +3,16 @@ import sys
 import time
 import html
 from datetime import datetime
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from PIL import Image
+
+try:
+    from selenium import webdriver
+except ImportError:
+    webdriver = None  # PoCs HTML (CRLF, XSS, etc.) no requieren Selenium; solo capturas opcionales.
+
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
 import base64
 import concurrent.futures
 import threading
@@ -17,6 +21,10 @@ from tqdm import tqdm
 class PoCGenerator:
     def __init__(self, output_dir="output", max_workers=4, screenshot_timeout=30):
         """Inicializa el generador de PoCs"""
+        if not os.path.isabs(output_dir):
+            wd = os.environ.get("NELUXMATIZER_WORKDIR")
+            if wd:
+                output_dir = os.path.join(os.path.abspath(wd), output_dir)
         self.output_dir = output_dir
         self.poc_dir = os.path.join(output_dir, "poc")
         self.screenshots_dir = os.path.join(output_dir, "screenshots")
@@ -31,13 +39,16 @@ class PoCGenerator:
         self.driver_pool = []
         self.driver_lock = threading.Lock()
         
-        # Configurar Chrome options
-        self.chrome_options = webdriver.ChromeOptions()
-        self.chrome_options.add_argument('--no-sandbox')
-        self.chrome_options.add_argument('--disable-dev-shm-usage')
-        self.chrome_options.add_argument('--disable-gpu')
-        self.chrome_options.add_argument('--window-size=1920,1080')
-        self.chrome_options.add_argument('--start-maximized')
+        # Chrome options (solo si Selenium está instalado)
+        if webdriver is not None:
+            self.chrome_options = webdriver.ChromeOptions()
+            self.chrome_options.add_argument('--no-sandbox')
+            self.chrome_options.add_argument('--disable-dev-shm-usage')
+            self.chrome_options.add_argument('--disable-gpu')
+            self.chrome_options.add_argument('--window-size=1920,1080')
+            self.chrome_options.add_argument('--start-maximized')
+        else:
+            self.chrome_options = None
     
     def _escape_url_for_js(self, url):
         """Escapes a URL for safe use in JavaScript"""
@@ -64,6 +75,10 @@ class PoCGenerator:
     
     def _init_driver_pool(self):
         """Initializes a pool of Chrome drivers for parallelization"""
+        if webdriver is None or self.chrome_options is None:
+            sys.stdout.write("⚠️ Selenium not installed — screenshot pool disabled (HTML PoCs still work).\n")
+            sys.stdout.flush()
+            return
         try:
             for _ in range(self.max_workers):
                 driver = webdriver.Chrome(options=self.chrome_options)
@@ -287,6 +302,10 @@ class PoCGenerator:
 
     def _capture_url_screenshot(self, url, filename, headless=True):
         """Captures screenshot of a specific URL"""
+        if webdriver is None:
+            return self._create_fallback_screenshot(
+                filename, url, "selenium not installed (pip install selenium)"
+            )
         # Only create screenshots folder if needed
         if not os.path.exists(self.screenshots_dir):
             os.makedirs(self.screenshots_dir, exist_ok=True)
@@ -332,7 +351,9 @@ class PoCGenerator:
     def _create_fallback_screenshot(self, filename, url="", error_msg="Screenshot failed"):
         """Creates a basic screenshot when real capture fails"""
         try:
-            from PIL import Image, ImageDraw, ImageFont
+            if Image is None:
+                return None
+            from PIL import ImageDraw, ImageFont
             
             # Only create screenshots folder if needed
             if not os.path.exists(self.screenshots_dir):
@@ -828,7 +849,7 @@ class PoCGenerator:
 </html>"""
         
         # Guardar el archivo HTML (usar el nombre basado en dominio ya definido arriba)
-        html_path = os.path.join("output", "poc", html_filename)
+        html_path = os.path.join(self.poc_dir, html_filename)
         
         # Crear directorio si no existe
         os.makedirs(os.path.dirname(html_path), exist_ok=True)
@@ -1192,226 +1213,413 @@ class PoCGenerator:
             'html_filename': html_filename,
             'screenshot_filename': None
         }
-    
-    def generate_crlf_poc(self, target_url, method="GET", screenshot=False, domain=None):
-        """Genera PoC para CRLF Injection"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Crear un hash único basado en la URL para evitar sobrescribir PoCs
-        import hashlib
-        url_hash = hashlib.md5(target_url.encode()).hexdigest()[:8]
-        
-        html_content = f"""
-<!DOCTYPE html>
-<html>
+
+    def _crlf_extract_url_from_report(self, text: str) -> str:
+        """Saca una URL http(s) del texto del scanner (línea simple o bloque de informe)."""
+        import re
+        text = str(text).strip()
+        if not text:
+            return ""
+        m = re.search(r"\[(?:GET|POST)\]\s*\[VULNERABLE\]\s*(\S+)", text, re.I)
+        if m:
+            return m.group(1).strip().rstrip('`"\'')
+        m = re.search(r"https?://[^\s\]\'\"<>]+", text)
+        if m:
+            return m.group(0).rstrip(".,);")
+        if text.startswith("http://") or text.startswith("https://"):
+            return text.split("\n")[0].strip().split()[0]
+        return ""
+
+    def _crlf_normalize_vuln_entries(self, vulnerable_urls, method=None):
+        """
+        Lista de hallazgos del scan, o llamada batch (url, method).
+        Devuelve lista de dicts: index, url, method (misma idea que redirect/sqli).
+        """
+        import re
+        out = []
+        seen = set()
+        idx = 0
+
+        def push(u: str, m: str):
+            nonlocal idx
+            u = (u or "").strip()
+            if not u or u in seen:
+                return
+            seen.add(u)
+            out.append({"index": idx, "url": u, "method": m})
+            idx += 1
+
+        if isinstance(vulnerable_urls, str) and method is not None:
+            push(vulnerable_urls, method or "GET")
+            return out
+
+        items = vulnerable_urls if isinstance(vulnerable_urls, (list, tuple)) else [vulnerable_urls]
+        for item in items:
+            text = str(item).strip()
+            if not text:
+                continue
+            meth = "POST" if re.search(r"\[POST\]", text, re.I) else "GET"
+            if re.search(r"\[GET\]", text, re.I) and not re.search(r"\[POST\]", text, re.I):
+                meth = "GET"
+            u = self._crlf_extract_url_from_report(text)
+            if u:
+                push(u, meth)
+        return out
+
+    def generate_crlf_poc(self, vulnerable_urls, method=None, screenshot=False, domain=None):
+        """Genera PoC CRLF alineado con redirect/XXE: URLs reales del escáner, dropdown, JSON en JS."""
+        import json
+        from urllib.parse import urlparse
+
+        vuln_data = self._crlf_normalize_vuln_entries(vulnerable_urls, method=method)
+        if not vuln_data:
+            sys.stdout.write("⚠️ CRLF PoC: no se pudieron extraer URLs del informe\n")
+            sys.stdout.flush()
+            return {
+                "error": "No CRLF URLs extracted",
+                "html_filename": None,
+                "html_path": None,
+            }
+
+        if domain:
+            base_domain = domain
+            clean_domain = base_domain.replace(":", "_").replace("/", "_").replace("\\", "_")
+        else:
+            first = vuln_data[0]["url"]
+            base_domain = urlparse(first).netloc or "unknown"
+            clean_domain = base_domain.replace("www.", "").replace(".", "_")
+
+        safe_domain = html.escape(base_domain)
+        html_filename = f"{clean_domain}_crlf.html"
+
+        dropdown_options = []
+        for v in vuln_data:
+            disp = v["url"][:70] + "..." if len(v["url"]) > 70 else v["url"]
+            label = html.escape(f"{v['method']} — {disp}")
+            dropdown_options.append(f'<option value="{v["index"]}">{label}</option>')
+        dropdown_html = "\n".join(dropdown_options)
+
+        n_get = len([x for x in vuln_data if x["method"] == "GET"])
+        n_post = len([x for x in vuln_data if x["method"] == "POST"])
+
+        html_content = f"""<!DOCTYPE html>
+<html lang="en">
 <head>
-    <title>CRLF Injection PoC - {target_url}</title>
+    <meta charset="UTF-8">
+    <title>CRLF Injection PoC — {safe_domain}</title>
     <style>
         body {{ font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }}
         .header {{ background: #9b59b6; color: white; padding: 20px; border-radius: 5px; text-align: center; }}
         .url-box {{ background: white; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 5px solid #9b59b6; }}
         .button {{ background: #3498db; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }}
-        .payload {{ background: #2c3e50; color: #ecf0f1; padding: 15px; margin: 15px 0; border-radius: 5px; font-family: monospace; }}
+        .button:hover {{ background: #2980b9; }}
+        .button:disabled {{ background: #bdc3c7; cursor: not-allowed; }}
+        .dropdown-container {{ background: white; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 5px solid #3498db; }}
+        .dropdown {{ width: 100%; padding: 10px; border: 1px solid #bdc3c7; border-radius: 5px; font-size: 14px; }}
+        .vuln-info {{ background: #f8f9fa; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 5px solid #28a745; }}
+        .method-badge {{ display: inline-block; padding: 4px 8px; border-radius: 3px; font-size: 12px; font-weight: bold; margin-right: 10px; }}
+        .method-get {{ background: #27ae60; color: white; }}
+        .method-post {{ background: #e74c3c; color: white; }}
+        .payload-box {{ background: #2c3e50; color: #ecf0f1; padding: 10px; border-radius: 3px; font-family: monospace; word-break: break-all; margin-top: 8px; }}
+        .result {{ background: white; padding: 15px; margin: 15px 0; border-radius: 5px; border: 2px solid #9b59b6; }}
+        pre.cmd {{ background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-all; }}
+        pre.out {{ background: #0d1117; color: #c9d1d9; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; max-height: 320px; overflow-y: auto; }}
     </style>
 </head>
 <body>
     <div class="header">
         <h1>🚨 CRLF Injection PoC</h1>
-        <p>Target: <strong>{html.escape(target_url)}</strong></p>
-        <p>Method: <strong>{method}</strong></p>
+        <p>Target: <strong>{safe_domain}</strong></p>
+        <p>Found <strong>{len(vuln_data)}</strong> CRLF finding(s) — GET: {n_get}, POST: {n_post}</p>
     </div>
-    
-    <div class="url-box">
-        <strong>Vulnerable URL:</strong><br>
-        {html.escape(target_url)}
-    </div>
-    
-    <div class="payload">
-        <strong>CRLF URLs to test:</strong><br>
-        <select id="payloadSelect" onchange="updatePayload()" style="width: 100%; padding: 8px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px; background: white;">
-            <option value="{target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0aX-Injected-Header: test')}">{target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0aX-Injected-Header: test')}</option>
-            <option value="{target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0a%0d%0aHTTP/1.1 200 OK')}">{target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0a%0d%0aHTTP/1.1 200 OK')}</option>
-            <option value="{target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0aContent-Length: 0')}">{target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0aContent-Length: 0')}</option>
-            <option value="{target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0a%0d%0a')}">{target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0a%0d%0a')}</option>
-            <option value="{target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0aSet-Cookie: malicious=value')}">{target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0aSet-Cookie: malicious=value')}</option>
-            <option value="{target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0aLocation: http://evil.com')}">{target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0aLocation: http://evil.com')}</option>
-            <option value="{target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0aX-Custom-Header: value')}">{target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0aX-Custom-Header: value')}</option>
-            <option value="{target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0a%0d%0aHTTP/1.1 301 Moved Permanently')}">{target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0a%0d%0aHTTP/1.1 301 Moved Permanently')}</option>
-            <option value="{target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0aCache-Control: no-cache')}">{target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0aCache-Control: no-cache')}</option>
-            <option value="{target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0aX-Forwarded-For: 127.0.0.1')}">{target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0aX-Forwarded-For: 127.0.0.1')}</option>
+
+    <div class="dropdown-container">
+        <h3>🔍 Select finding (URLs from Neluxmatizer scan)</h3>
+        <select class="dropdown" id="vulnSelect" onchange="selectVulnerability()">
+            <option value="">Choose a finding...</option>
+            {dropdown_html}
         </select>
-        <div id="selectedPayload" style="background: #e74c3c; color: white; padding: 5px; margin: 5px 0; border-radius: 3px; font-family: monospace; word-break: break-all;">
-            <strong>Method:</strong> {method}<br>
-            <strong>URL:</strong> {target_url.replace('PAYLOAD_PLACEHOLDER', '%0d%0aX-Injected-Header: test')}
-        </div>
     </div>
-    
-    <button class="button" onclick="openInNewTab()">🔗 Open in New Tab</button>
-    <button class="button" onclick="copyUrl()">📋 Copy URL</button>
-    <button class="button" onclick="copyPayload()">📋 Copy Payload</button>
-    <button class="button" onclick="showAnalysis()">🔍 Show Analysis</button>
-    <button class="button" onclick="showDetails()">📊 Show Details</button>
-    
-    <div id="analysis" class="analysis" style="background: #f8f9fa; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 5px solid #28a745; display: none;">
-        <h3>🔍 Vulnerability Analysis</h3>
-        <p><strong>Vulnerability Type:</strong> CRLF Injection</p>
-        <p><strong>Risk Level:</strong> MEDIUM</p>
-        <p><strong>Impact:</strong> Header injection, response splitting, cache poisoning</p>
-        <p><strong>Affected Parameter:</strong> URL parameter</p>
-        <p><strong>Detection Method:</strong> Carriage return and line feed injection</p>
-        <p><strong>Common Attack Vectors:</strong></p>
-        <ul>
-            <li>Header injection</li>
-            <li>Response splitting</li>
-            <li>Cache poisoning</li>
-            <li>HTTP response manipulation</li>
-        </ul>
+
+    <div id="vulnInfo" class="vuln-info" style="display: none;">
+        <h3>📊 Selected details</h3>
+        <div id="vulnDetails"></div>
+    </div>
+
+    <div class="url-box" id="urlBox" style="display: none;">
+        <strong>Full URL (payload embedded):</strong><br>
+        <span id="selectedUrl" class="payload-box" style="display:block;"></span>
+    </div>
+
+    <div style="text-align: center; margin: 20px 0;">
+        <button class="button" onclick="openInNewTab()" id="openBtn" disabled>🔗 Open in New Tab</button>
+        <button class="button" onclick="copyUrl()" id="copyBtn" disabled>📋 Copy URL</button>
+        <button class="button" onclick="showAnalysis()">🔍 Show Analysis</button>
+        <button class="button" onclick="showDetails()">📊 Show Details</button>
+    </div>
+
+    <div class="result" id="result">
+        Select a finding above: the analysis panel opens, <code>curl</code> commands are filled in, and a <code>fetch</code> runs (CORS-limited). Use <strong>Show Analysis</strong> to hide this panel.
+    </div>
+
+    <div id="analysis" class="vuln-info" style="display: none;">
+        <h3>🔍 Why this matters (header evidence)</h3>
+        <p>The real check is the <strong>HTTP response</strong>: injected headers (<code>Set-Cookie</code>, <code>Location</code>, <code>X-*</code>, response splitting, etc.). The browser often <strong>cannot</strong> expose all response headers (CORS); use <code>curl</code> in a terminal for full headers.</p>
+
+        <p><strong>1) Terminal (recommended)</strong> — copy and run:</p>
+        <pre id="curlCommands" class="cmd">(Select a finding above)</pre>
+        <button type="button" class="button" onclick="copyCurlBlock()">📋 Copy curl commands</button>
+        <button type="button" class="button" onclick="copyCurlOneLiner()" title="Single command: dump response headers">📋 Copy one-line curl (headers)</button>
+
+        <p id="curlPostNote" style="display:none;margin-top:12px;padding:10px;background:#fff3cd;border-radius:5px;"></p>
+
+        <p style="margin-top:16px;"><strong>2) Browser (limited)</strong></p>
+        <p style="font-size:14px;color:#555;">You only see headers the browser is allowed to read (CORS). If this fails or is empty, use curl.</p>
+        <p style="font-size:13px;color:#444;margin:6px 0 0 0;"><strong>Note:</strong> A web page <em>cannot</em> run <code>curl</code> on your computer (no shell access). Only <code>fetch()</code> runs in the browser; real <code>curl</code> must be pasted into a terminal (section 1 or the buttons above).</p>
+        <p style="font-size:13px;color:#444;background:#eef6ff;padding:10px;border-radius:6px;border-left:4px solid #3498db;margin:10px 0;">
+            <strong>Intermittent CRLF:</strong> proof may not show on the first try. If injected headers do not appear, <strong>send the same request again</strong> (some stacks need several attempts). Use <strong>Retry fetch</strong> below, or run the curl block in a terminal multiple times.
+        </p>
+        <button type="button" class="button" onclick="probeHeadersFetch()">🔄 Retry fetch</button>
+        <span style="font-size:13px;color:#666;margin-left:8px;">Same URL as selected in the dropdown — click as many times as needed. If fetch fails, the output below includes a one-line curl; or use <strong>Copy one-line curl</strong> in section 1.</span>
+        <pre id="fetchProbeResult" class="out" style="margin-top:8px;min-height:48px;">(Select a finding in the dropdown — fetch runs automatically)</pre>
+
+        <p style="margin-top:16px;"><strong>What to look for:</strong> headers that are <em>new or different</em> compared to a <strong>baseline</strong> request <em>without</em> the CRLF payload (same path/params, no <code>%0d%0a</code> / injected newlines).</p>
+        <p style="font-size:13px;color:#333;background:#fff8e6;padding:10px;border-radius:6px;border-left:4px solid #e67e22;margin:8px 0;">
+            <strong>False-positive check:</strong> the probe URL may embed header names/values (e.g. <code>Cache-Control</code>). If the response already contained those values <em>without</em> CRLF injection, the match can be coincidental — always diff against the baseline URL.
+        </p>
         <div class="warning" style="background: #f8d7da; color: #721c24; padding: 10px; border-radius: 5px; margin: 10px 0;">
-            <strong>⚠️ Warning:</strong> CRLF injection can lead to header manipulation and cache poisoning. 
-            Use responsibly and only on systems you have permission to test.
+            <strong>⚠️</strong> Only use on authorized targets.
         </div>
     </div>
-    
-    <div id="details" class="details" style="background: #fff3cd; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 5px solid #ffc107; display: none; font-family: monospace;">
-        <h3>📊 CRLF Details</h3>
-        <p><em>This shows what a successful CRLF attack might reveal:</em></p>
-        <div style="background: #2c3e50; color: #ecf0f1; padding: 10px; border-radius: 3px;">
-<strong>Header Injection:</strong>
-• X-Injected-Header: test
-• X-Custom-Header: value
-• Set-Cookie: malicious=value
-• Location: malicious-url
 
-<strong>Common Payloads:</strong>
-• %0d%0aX-Injected-Header: test
-• %0d%0a%0d%0aHTTP/1.1 200 OK
-• %0d%0aContent-Length: 0
-• %0d%0a%0d%0a
-
-<strong>Impact Examples:</strong>
-• Response header manipulation
-• Cache poisoning attacks
-• Session fixation
-• HTTP response splitting
-        </div>
-        <p><strong>Note:</strong> This is simulated content. The actual response will depend on the server's header handling.</p>
+    <div id="details" class="vuln-info" style="display: none;">
+        <h3>📊 Technical</h3>
+        <p><strong>Generated:</strong> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
+        <p><strong>POST findings:</strong> reproduce with the same body as in the scan output (Neluxmatizer report).</p>
     </div>
-    
+
     <script>
-        function updatePayload() {{
-            const select = document.getElementById('payloadSelect');
-            const display = document.getElementById('selectedPayload');
-            display.innerHTML = '<strong>Method:</strong> {method}<br><strong>URL:</strong> ' + select.value;
-        }}
-        
-        function copyPayload() {{
-            const select = document.getElementById('payloadSelect');
-            const payload = select.value;
-            navigator.clipboard.writeText(payload).then(function() {{
-                const button = event.target;
-                const originalText = button.textContent;
-                button.textContent = '✅ Copied!';
-                setTimeout(() => {{
-                    button.textContent = originalText;
-                }}, 2000);
-            }}).catch(function(err) {{
-                console.error('Error copying payload: ', err);
-                const textArea = document.createElement('textarea');
-                textArea.value = payload;
-                document.body.appendChild(textArea);
-                textArea.select();
-                document.execCommand('copy');
-                document.body.removeChild(textArea);
-            }});
-        }}
-        
-        function showAnalysis() {{
+        const vulnerabilities = {json.dumps(vuln_data)};
+
+        let probeFetchSeq = 0;
+
+        function selectVulnerability() {{
+            const select = document.getElementById('vulnSelect');
+            const vulnInfo = document.getElementById('vulnInfo');
+            const urlBox = document.getElementById('urlBox');
+            const openBtn = document.getElementById('openBtn');
+            const copyBtn = document.getElementById('copyBtn');
+            const vulnDetails = document.getElementById('vulnDetails');
+            const selectedUrl = document.getElementById('selectedUrl');
             const analysis = document.getElementById('analysis');
-            if (analysis.style.display === 'none' || analysis.style.display === '') {{
-                analysis.style.display = 'block';
-            }} else {{
-                analysis.style.display = 'none';
+
+            if (select.value === '') {{
+                vulnInfo.style.display = 'none';
+                urlBox.style.display = 'none';
+                openBtn.disabled = true;
+                copyBtn.disabled = true;
+                const fr = document.getElementById('fetchProbeResult');
+                if (fr) fr.textContent = '(Select a finding above)';
+                return;
+            }}
+
+            const vuln = vulnerabilities[parseInt(select.value, 10)];
+            const badgeClass = vuln.method === 'POST' ? 'method-post' : 'method-get';
+            vulnDetails.innerHTML = '<span class="method-badge ' + badgeClass + '">' + vuln.method +
+                '</span><p><strong>Exploit URL</strong> (CRLF payload in query/path as detected):</p>';
+            selectedUrl.textContent = vuln.url;
+            vulnInfo.style.display = 'block';
+            urlBox.style.display = 'block';
+            openBtn.disabled = false;
+            copyBtn.disabled = false;
+            updateCrlfProofCommands();
+            if (analysis) analysis.style.display = 'block';
+            probeHeadersFetch();
+        }}
+
+        function shellQuoteBash(s) {{
+            if (!s) return "''";
+            return "'" + String(s).replace(/'/g, "'\\''") + "'";
+        }}
+
+        function updateCrlfProofCommands() {{
+            const select = document.getElementById('vulnSelect');
+            const curlPre = document.getElementById('curlCommands');
+            const postNote = document.getElementById('curlPostNote');
+            if (!curlPre) return;
+            if (select.value === '') {{
+                curlPre.textContent = '(Select a finding above)';
+                if (postNote) {{ postNote.style.display = 'none'; postNote.innerHTML = ''; }}
+                return;
+            }}
+            const vuln = vulnerabilities[parseInt(select.value, 10)];
+            const q = shellQuoteBash(vuln.url);
+            curlPre.textContent =
+                '# CRLF can be intermittent: run the same curl several times if needed.\\n' +
+                '# Response headers only (no body) — look for Set-Cookie, Location, X-*, splits, etc.\\n' +
+                'curl -sS -D - -o /dev/null ' + q + '\\n\\n' +
+                '# Same request, verbose (first lines)\\n' +
+                'curl -v ' + q + ' 2>&1 | head -n 100\\n\\n' +
+                '# Baseline: same path/params without %0d%0a (adjust URL manually for comparison)';
+            if (postNote) {{
+                if (vuln.method === 'POST') {{
+                    postNote.style.display = 'block';
+                    postNote.textContent = '';
+                    const intro = document.createElement('p');
+                    intro.innerHTML = '<strong>POST:</strong> the scanner injected CRLF in the form body. Replay with the same body as in the Neluxmatizer report (or Burp). Example curl (replace <code>-d</code> per your report):';
+                    postNote.appendChild(intro);
+                    const prePost = document.createElement('pre');
+                    prePost.className = 'cmd';
+                    prePost.style.marginTop = '8px';
+                    prePost.textContent = 'curl -sS -D - -o /dev/null -X POST ' + q + ' -H "Content-Type: application/x-www-form-urlencoded" -d "param_name=VALUE_WITH_PAYLOAD"';
+                    postNote.appendChild(prePost);
+                }} else {{
+                    postNote.style.display = 'none';
+                    postNote.textContent = '';
+                }}
             }}
         }}
-        
-        function showDetails() {{
-            const details = document.getElementById('details');
-            if (details.style.display === 'none' || details.style.display === '') {{
-                details.style.display = 'block';
-            }} else {{
-                details.style.display = 'none';
-            }}
-        }}
-        
-        function openInNewTab() {{
-            const select = document.getElementById('payloadSelect');
-            const url = select.value;
-            window.open(url, '_blank');
-        }}
-        
-        function copyUrl() {{
-            const select = document.getElementById('payloadSelect');
-            const url = select.value;
-            navigator.clipboard.writeText(url).then(function() {{
-                // Opcional: mostrar feedback
-                const button = event.target;
-                const originalText = button.textContent;
-                button.textContent = '✅ Copied!';
-                setTimeout(() => {{
-                    button.textContent = originalText;
-                }}, 2000);
-            }}).catch(function(err) {{
-                console.error('Error copying URL: ', err);
-                // Fallback: usar método alternativo
-                const textArea = document.createElement('textarea');
-                textArea.value = url;
-                document.body.appendChild(textArea);
-                textArea.select();
+
+        function copyCurlBlock() {{
+            const t = document.getElementById('curlCommands');
+            if (!t) return;
+            navigator.clipboard.writeText(t.textContent).then(() => alert('Commands copied')).catch(() => {{
+                const x = document.createElement('textarea');
+                x.value = t.textContent;
+                document.body.appendChild(x);
+                x.select();
                 document.execCommand('copy');
-                document.body.removeChild(textArea);
+                document.body.removeChild(x);
+                alert('Commands copied');
             }});
+        }}
+
+        function copyCurlOneLiner() {{
+            const select = document.getElementById('vulnSelect');
+            if (!select || select.value === '') {{
+                alert('Select a finding in the dropdown first.');
+                return;
+            }}
+            const vuln = vulnerabilities[parseInt(select.value, 10)];
+            if (vuln.method === 'POST') {{
+                alert('For POST, copy the curl example in the yellow box (section 1) or the full command block.');
+                return;
+            }}
+            const q = shellQuoteBash(vuln.url);
+            const line = 'curl -sS -D - -o /dev/null ' + q;
+            const done = () => alert('One-line curl copied — paste in a terminal.');
+            navigator.clipboard.writeText(line).then(done).catch(() => {{
+                const x = document.createElement('textarea');
+                x.value = line;
+                document.body.appendChild(x);
+                x.select();
+                document.execCommand('copy');
+                document.body.removeChild(x);
+                done();
+            }});
+        }}
+
+        async function probeHeadersFetch() {{
+            const out = document.getElementById('fetchProbeResult');
+            const select = document.getElementById('vulnSelect');
+            if (!out || !select) return;
+            probeFetchSeq++;
+            const mySeq = probeFetchSeq;
+            if (select.value === '') {{
+                out.textContent = 'Select a finding in the dropdown first.';
+                return;
+            }}
+            const vuln = vulnerabilities[parseInt(select.value, 10)];
+            if (vuln.method === 'POST') {{
+                out.textContent = 'POST cannot be replayed here without the exact body. Use curl from the report or Burp.';
+                return;
+            }}
+            out.textContent = 'Requesting…';
+            try {{
+                const r = await fetch(vuln.url, {{ method: 'GET', mode: 'cors', credentials: 'omit', redirect: 'manual' }});
+                if (mySeq !== probeFetchSeq) return;
+                let lines = 'URL: ' + vuln.url + '\\n\\n';
+                lines += 'status: ' + r.status + ' ' + r.statusText + '\\n\\n';
+                if (r.status >= 400) {{
+                    lines += '⚠️ HTTP ' + r.status + ': error responses are usually weak evidence for CRLF impact (injection may still be parsed, but the visible response is not a clean “split” response). Confirm with curl and compare to a baseline URL without %0d%0a.\\n\\n';
+                }}
+                lines += 'Headers visible to JS (CORS often hides most cross-origin):\\n';
+                let n = 0;
+                r.headers.forEach((v, k) => {{ n++; lines += k + ': ' + v + '\\n'; }});
+                if (n === 0) lines += '(no headers exposed to JS — common for another origin)\\n';
+                lines += '\\nIf this looks wrong, compare header names/values to a baseline request without the CRLF bytes (see “False-positive check” above).';
+                lines += '\\nIf empty or incomplete, run the curl commands above in a terminal.';
+                out.textContent = lines;
+            }} catch (e) {{
+                if (mySeq !== probeFetchSeq) return;
+                const q = shellQuoteBash(vuln.url);
+                const one = 'curl -sS -D - -o /dev/null ' + q;
+                let msg = 'Fetch error: ' + (e.message || 'Failed to fetch') + '\\n\\n';
+                msg += 'This page cannot run curl on your machine — only the browser runs fetch(). Paste the line below in a terminal to reproduce the same GET and see full headers.\\n\\n';
+                msg += one + '\\n\\n';
+                msg += 'Typical reasons for "Failed to fetch":\\n';
+                msg += '- PoC opened as file:// or from another origin (CORS blocks cross-origin reads)\\n';
+                msg += '- Mixed content (e.g. HTTPS page requesting HTTP URL)\\n';
+                msg += '- Network / DNS / firewall / browser extensions\\n\\n';
+                msg += 'Use "Copy curl commands" (section 1) for verbose curl + baseline notes, or "Copy one-line curl".';
+                out.textContent = msg;
+            }}
+        }}
+
+        function openInNewTab() {{
+            const select = document.getElementById('vulnSelect');
+            if (select.value === '') return;
+            const vuln = vulnerabilities[parseInt(select.value, 10)];
+            window.open(vuln.url, '_blank');
+        }}
+
+        function copyUrl() {{
+            const select = document.getElementById('vulnSelect');
+            if (select.value === '') return;
+            const vuln = vulnerabilities[parseInt(select.value, 10)];
+            navigator.clipboard.writeText(vuln.url).then(() => {{
+                alert('URL copied to clipboard');
+            }}).catch(() => {{
+                const t = document.createElement('textarea');
+                t.value = vuln.url;
+                document.body.appendChild(t);
+                t.select();
+                document.execCommand('copy');
+                document.body.removeChild(t);
+            }});
+        }}
+
+        function showAnalysis() {{
+            const el = document.getElementById('analysis');
+            const show = (el.style.display === 'none' || el.style.display === '');
+            el.style.display = show ? 'block' : 'none';
+            if (show) {{
+                updateCrlfProofCommands();
+                if (document.getElementById('vulnSelect').value !== '') probeHeadersFetch();
+            }}
+        }}
+
+        function showDetails() {{
+            const el = document.getElementById('details');
+            el.style.display = (el.style.display === 'none' || el.style.display === '') ? 'block' : 'none';
         }}
     </script>
-    
-    <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border-radius: 5px;">
-        <strong>💡 How to test:</strong><br>
-        1. Open the URL in a new tab<br>
-        2. Use browser dev tools to see response headers<br>
-        3. Look for injected headers or response splitting
-    </div>
 </body>
 </html>
-        """
-        
-                # Usar el dominio proporcionado o extraer de la primera URL
-        if domain:
-            base_domain = domain
-            clean_domain = base_domain.replace(':', '_').replace('/', '_').replace('\\', '_')
-        else:
-            # Extraer el dominio base de la primera URL
-            from urllib.parse import urlparse
-            if vulnerable_urls:
-                base_domain = urlparse(vulnerable_urls[0]).netloc
-                clean_domain = base_domain.replace('www.', '').replace('.', '_')
-            else:
-                base_domain = "unknown"
-                clean_domain = "unknown"
-        
-        # Crear nombre de archivo basado en el dominio
-        html_filename = f"{clean_domain}_crlf.html"
+"""
+
         html_path = os.path.join(self.poc_dir, html_filename)
-        
-        with open(html_path, 'w', encoding='utf-8') as f:
+        with open(html_path, "w", encoding="utf-8") as f:
             f.write(html_content)
-        
-        sys.stdout.write(f"✅ CRLF PoC generado: {html_filename}\n")
-        sys.stdout.flush()
+
+        # No imprimir aquí: scan_lista ya muestra "✅ CRLF PoC generado" con html_filename
         return {
-            'html_path': html_path,
-            'screenshot_path': None,
-            'html_filename': html_filename,
-            'screenshot_filename': None
+            "html_path": html_path,
+            "screenshot_path": None,
+            "html_filename": html_filename,
+            "screenshot_filename": None,
         }
-    
+
     def generate_xss_poc(self, vulnerable_urls, screenshot=False, domain=None):
         """Genera PoC para XSS con múltiples URLs vulnerables"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -4127,7 +4335,7 @@ class PoCGenerator:
 </html>"""
         
         # Guardar el archivo HTML
-        html_path = os.path.join("output", "poc", html_filename)
+        html_path = os.path.join(self.poc_dir, html_filename)
         
         # Crear directorio si no existe
         os.makedirs(os.path.dirname(html_path), exist_ok=True)

@@ -15,7 +15,8 @@ colorama>=0.4.4
 # Progress bars and terminal UI
 tqdm>=4.62.0
 
-# Web automation and screenshot capture
+# PoC: Selenium + Pillow + webdriver-manager (install.sh / pip -r requirements.txt installs all).
+# Without selenium, HTML PoCs still generate; screenshots use a fallback (see poc_generator.py).
 selenium>=4.0.0
 webdriver-manager>=3.8.0
 
@@ -65,8 +66,8 @@ Pillow>=8.3.0
 # Installation instructions:
 # pip3 install -r requirements.txt
 # 
-# For minimal installation (core functionality only):
+# Minimal (scanner only, no full PoC stack):
 # pip3 install requests beautifulsoup4 colorama urllib3 lxml tqdm
 #
-# For full installation with PoC generation:
-# pip3 install requests beautifulsoup4 colorama urllib3 lxml tqdm selenium webdriver-manager Pillow
+# Full install (recommended): entire file — includes selenium + Pillow for PoCs.
+# pip3 install -r requirements.txt

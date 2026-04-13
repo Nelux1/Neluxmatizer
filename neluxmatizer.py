@@ -35,7 +35,7 @@ sys.stdout.flush()
 sys.stdout.write('\n')
 sys.stdout.flush()
 
-parser = argparse.ArgumentParser(prog="neluxmatizer.py")
+parser = argparse.ArgumentParser(prog="neluxmatizer")
 def parse_excepciones(value):
     return value.split(",")
 
@@ -63,6 +63,13 @@ parser.add_argument("-l",
                     dest="usedlist",
                     help="Check a list of URLs.",
                     action= 'store' )
+parser.add_argument(
+    "-param",
+    "-p",
+    dest="param_file",
+    help="Endpoint list file (one URL per line); skips crawl, Wayback, headless, and param discovery. Alias: -param / -p.",
+    action="store",
+)
 parser.add_argument("-w",
                     dest="word",
                     help="wordlist of payloads",
@@ -145,24 +152,58 @@ args = parser.parse_args()
 
 
        
-def selector():    
-    output= os.path.join('output','param.txt')
+def selector():
+    # Salida (-o, output/, checkpoints, PoC) respecto al directorio actual al arrancar
+    work_dir = os.path.abspath(os.getcwd())
+    os.environ["NELUXMATIZER_WORKDIR"] = work_dir
+
+    output = os.path.join(work_dir, "output", "param.txt")
     url = []
     wordlist=[]
     urls_vulnerables=[]
     threads=30
-    fname= os.path.join('output','urls_vulnerables.txt')
+    fname = os.path.join(work_dir, "output", "urls_vulnerables.txt")
     c = cl = cr = x = xe = l = s = r = rc = sr = sst = o = False
     checkpoint_manager = None
     checkpoint_id = None
+    param_endpoints = None
     if args.version:
          sys.stdout.write('New version with IA 1.1\n')
          sys.stdout.flush()
          sys.stdout.write('Check the current version at https://github.com/Nelux1/Neluxmatizer.git\n')
          sys.stdout.flush()
-    if args.url:
+    if args.param_file:
+        if args.url or args.usedlist:
+            sys.stdout.write(f'{Fore.RED}[!] Do not combine -param with -u or -l.{Fore.RESET}\n')
+            sys.stdout.flush()
+            sys.exit(1)
+        plist = os.path.expanduser(args.param_file)
+        if not os.path.exists(plist):
+            sys.stdout.write(f'{Fore.RED}[!] Error: -param file not found: {args.param_file}{Fore.RESET}\n')
+            sys.stdout.write(f'{Fore.YELLOW}[!] Searched path: {os.path.abspath(plist)}{Fore.RESET}\n')
+            sys.stdout.flush()
+            sys.exit(1)
+        param_endpoints = []
+        with open(plist, "r", encoding="utf-8", errors="replace") as pf:
+            for line in pf:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if not line.lower().startswith(("http://", "https://")):
+                    line = "https://" + line.lstrip("/")
+                param_endpoints.append(line)
+        if not param_endpoints:
+            sys.stdout.write(f'{Fore.RED}[!] -param file is empty or has no valid lines.{Fore.RESET}\n')
+            sys.stdout.flush()
+            sys.exit(1)
+        url = [param_endpoints[0]]
+        sys.stdout.write(
+            f'{Fore.CYAN}[+] Direct endpoint mode: {len(param_endpoints)} URL(s) from {args.param_file} (no crawl / discovery){Fore.RESET}\n'
+        )
+        sys.stdout.flush()
+    elif args.url:
          url.append(str(args.url))                
-    if args.usedlist:
+    if args.usedlist and not args.param_file:
          # Expand user path and verify file existence
          list_path = os.path.expanduser(args.usedlist)
          if not os.path.exists(list_path):
@@ -237,7 +278,8 @@ def selector():
         # User must use specific parameters like -click, -xss, etc.
         pass 
     if args.output:
-         fname= os.path.join(args.output)
+         p = os.path.expanduser(args.output)
+         fname = p if os.path.isabs(p) else os.path.join(work_dir, p)
          o=True
     if args.xss and not args.word:
          x=True
@@ -247,7 +289,7 @@ def selector():
          l=True
     
     # 🔄 CHECKPOINT SYSTEM - Initialize and verify checkpoint after processing all flags
-    if args.usedlist:
+    if args.usedlist and not args.param_file:
         try:
             from parametizer.checkpoint_manager import CheckpointManager
             
@@ -320,7 +362,7 @@ def selector():
         checkpoint_id = None
                                        
     if not args.word:        
-      all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id)     
+      all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id,param_endpoints=param_endpoints)     
     if args.word:
          # Expand user path and verify file existence
          wordlist_path = os.path.expanduser(args.word)
@@ -337,13 +379,13 @@ def selector():
                  wordlist.append(i)             
          if args.xss:
            x=True                        
-           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id)
+           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id,param_endpoints=param_endpoints)
          if args.lfi:
            l=True
-           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id)     
+           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id,param_endpoints=param_endpoints)     
          if args.sql:
            s=True
-           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id)
+           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id,param_endpoints=param_endpoints)
          if args.output:
            save_output(urls_vulnerables,fname,l)
      

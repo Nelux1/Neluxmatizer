@@ -207,10 +207,12 @@ def get_crtsh_subdomains(domain, retries=3):
                         if sub and domain in sub:
                             urls.add(ensure_url_format(sub))
                 break
-        except Exception as e:
+        except Exception:
             # Solo mostrar error en reintentos (no en el primer intento)
             if attempt > 0:
-                sys.stdout.write(f"\033[1;31m[!] Error crt.sh Timeout (retrying {attempt+1})\033[0m: {e}\n")
+                sys.stdout.write(
+                    f"\033[1;31m[!] Error crt.sh Timeout (retrying {attempt + 1})\033[0m\n"
+                )
                 sys.stdout.flush()
         time.sleep(3)
     return urls
@@ -603,12 +605,9 @@ def parametizer(domain, output_file=None, threads=5):
         except:
             continue
 
-    # Imprimir el total de URLs en la misma línea del progreso
+    # Total de URLs: lo imprime scan_lista tras headless (evita duplicar "Total URLs collected")
     with spinner_lock:
-        sys.stdout.write('\r' + ansi.clear_line())
-        sys.stdout.write(
-            fmt_line("1;36", "[+] Total URLs collected:", str(len(filtered))) + "\n"
-        )
+        sys.stdout.write("\r" + ansi.clear_line())
         sys.stdout.flush()
 
     lines = sorted(filtered)
