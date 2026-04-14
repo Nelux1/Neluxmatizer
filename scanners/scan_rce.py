@@ -1,6 +1,6 @@
 import requests
 import random
-from concurrent.futures import ThreadPoolExecutor
+from parametizer.bounded_pool import run_threadpool_pending_bounded
 from urllib.parse import urlparse, parse_qs, urljoin, quote
 from bs4 import BeautifulSoup
 from colorama import init, ansi
@@ -29,8 +29,7 @@ def confirm_reflection(text, marker="NELUX123456"):
     return count > 0 and count < 5  # reflejado una vez o pocas veces
 
 def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_agent):
-    print()
-    print('\033[1;36m<<<<<<<<<<<<\033[0m Testing Remote Code Execution \033[1;36m>>>>>>>>>>>>>>\033[0m\n')
+    print('\033[1;36m<<<<<<<<<<<<\033[0m Testing Remote Code Execution \033[1;36m>>>>>>>>>>>>>>\033[0m')
     print()
     total_tasks = (len(urip) * 2 + len(urif)) * len(wordlist)
     current = 0
@@ -251,39 +250,26 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
             current += 1
             update_progress(current, total_tasks)
 
-    # Crear tareas de manera más eficiente
-    tasks = []
-    
-    # Agrupar tareas por URL para evitar duplicación
-    for url in urip:
-        for payload in wordlist:
-            tasks.append((test_url, url, payload))
-            tasks.append((test_post, url, payload))
-    
-    for url in urif:
-        for payload in wordlist:
-            tasks.append((test_form, url, payload))
-    
-    # Procesar TODAS las tareas en paralelo para máximo rendimiento
-    with ThreadPoolExecutor(max_workers=threads) as executor:
-        # Enviar todas las tareas al pool de hilos
-        futures = [executor.submit(task[0], *task[1:]) for task in tasks]
-        
-        # Esperar a que se completen todas (pero en paralelo)
-        for future in futures:
-            try:
-                future.result()
-            except Exception:
-                pass
-    
+    def _iter_rce_tasks():
+        for url in urip:
+            for payload in wordlist:
+                yield (test_url, url, payload)
+                yield (test_post, url, payload)
+        for url in urif:
+            for payload in wordlist:
+                yield (test_form, url, payload)
+
+    run_threadpool_pending_bounded(_iter_rce_tasks(), threads)
+
     # Limpiar salida final
     with stdout_lock:
         sys.stdout.write('\r' + ansi.clear_line())
         sys.stdout.flush()
-        print()  # Asegurar salto de línea final
+        print()
     if vulnerable_endpoints:
-        print(f'\n\033[1;36m[+] Found {len(vulnerable_endpoints)} potential RCE vulnerabilities\033[0m\n')
+        print(f'\033[1;36m[+] Found {len(vulnerable_endpoints)} potential RCE vulnerabilities\033[0m')
     else:
-        print('\n\033[1;31m[-] No RCE vulnerabilities found\033[0m\n')
+        print('\033[1;31m[-] No RCE vulnerabilities found\033[0m')
+    print()
     
     return urls_vulnerables

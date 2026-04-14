@@ -7,7 +7,7 @@ import threading
 import urllib.parse
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs, urljoin, quote
-from concurrent.futures import ThreadPoolExecutor
+from parametizer.bounded_pool import run_threadpool_pending_bounded
 from colorama import init, ansi
 from parametizer.progress import update_progress, print_vulnerability
 from parametizer.core.headers import get_headers
@@ -83,8 +83,7 @@ def is_xss_response(text, payload):
     return indicator_count >= 2 or payload in text  # Al menos 2 indicadores o payload reflejado
 
 def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, random_agent=False):
-    print()
-    print('\033[1;36m<<<<<<<<<<<<\033[0m Testing Cross-Site Scripting \033[1;36m>>>>>>>>>>>>>\033[0m\n')
+    print('\033[1;36m<<<<<<<<<<<<\033[0m Testing Cross-Site Scripting \033[1;36m>>>>>>>>>>>>>\033[0m')
     print()
     total = (len(urip)*2 + len(urif)) * len(wordlist)
     current = 0
@@ -339,54 +338,32 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
             current += 1
             update_progress(current, total)
 
-    # Crear tareas de manera más eficiente
-    tasks = []
-    
-    # Agrupar tareas por URL para evitar duplicación
-    for url in urip:
-        for payload in wordlist:
-            tasks.append((test_url, url, payload))
-    
-    for url in urif:
-        for payload in wordlist:
-            tasks.append((test_form, url, payload))
-    
-    # Procesar TODAS las tareas en paralelo para máximo rendimiento
+    def _iter_xss_tasks():
+        for url in urip:
+            for payload in wordlist:
+                yield (test_url, url, payload)
+        for url in urif:
+            for payload in wordlist:
+                yield (test_form, url, payload)
+
     try:
-        with ThreadPoolExecutor(max_workers=threads) as executor:
-            # Enviar todas las tareas al pool de hilos
-            futures = [executor.submit(task[0], *task[1:]) for task in tasks]
-            
-            # Esperar a que se completen todas (pero en paralelo)
-            for future in futures:
-                try:
-                    # Verificar interrupción antes de procesar cada resultado
-                    from parametizer.interrupt import check_interruption
-                    if check_interruption():
-                        # Cancelar todas las tareas pendientes
-                        for f in futures:
-                            f.cancel()
-                        return
-                    
-                    future.result()
-                except Exception:
-                    pass
+        run_threadpool_pending_bounded(_iter_xss_tasks(), threads)
     except KeyboardInterrupt:
         from parametizer.interrupt import is_interrupted
         if is_interrupted():
             return
-        else:
-            raise
-    
+        raise
+
     # Limpiar salida final
     with stdout_lock:
         sys.stdout.write('\r' + ansi.clear_line())
         sys.stdout.flush()
-        print()  # Asegurar salto de línea final
+        print()
 
     if found > 0:
-        print(f'\n\033[1;36m[+] Found {found} potential XSS vulnerabilities\033[0m\n')
+        print(f'\033[1;36m[+] Found {found} potential XSS vulnerabilities\033[0m')
     else:
-        print('\n\033[1;31m[-] No XSS vulnerabilities found\033[0m\n')
+        print('\033[1;31m[-] No XSS vulnerabilities found\033[0m')
+    print()
     
     return urls_vulnerables

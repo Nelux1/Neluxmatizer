@@ -1,6 +1,6 @@
 import requests
 from urllib.parse import urlparse, parse_qs, urlencode
-from concurrent.futures import ThreadPoolExecutor
+from parametizer.bounded_pool import run_threadpool_tasks_in_chunks
 import random, sys, os, threading
 from parametizer.progress import update_progress, print_vulnerability
 from parametizer.core.headers import get_headers
@@ -40,7 +40,6 @@ def is_redirect_vulnerable(location, base_url, injected_value):
     return True
 
 def redirect(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_agent):
-    print()
     sys.stdout.write('\033[1;36m<<<<<<<<<<<<\033[0m  Testing Open Redirect \033[1;36m>>>>>>>>>>>>>\033[0m\n')
     print()
     sys.stdout.flush()
@@ -227,30 +226,19 @@ def redirect(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, ra
         for url in urif:
             tasks.append((test_post_redirect, url))
     
-    # Procesar TODAS las tareas en paralelo para máximo rendimiento
-    with ThreadPoolExecutor(max_workers=threads) as executor:
-        # Enviar todas las tareas al pool de hilos
-        futures = [executor.submit(task[0], *task[1:]) for task in tasks]
-        
-        # Esperar a que se completen todas (pero en paralelo)
-        for future in futures:
-            try:
-                future.result()
-            except Exception:
-                pass
-    
+    run_threadpool_tasks_in_chunks(tasks, threads)
+
     # Limpiar salida final
     with stdout_lock:
         sys.stdout.write('\r' + ansi.clear_line())
         sys.stdout.flush()
-    
-        sys.stdout.write('\n')  # Asegurar salto de línea final
-        sys.stdout.flush()
+    print()
     if found:
-        sys.stdout.write(f'\n\033[1;36m[+] Found {len(found)} potential Open Redirect vulnerabilities\033[0m\n')
+        sys.stdout.write(f'\033[1;36m[+] Found {len(found)} potential Open Redirect vulnerabilities\033[0m\n')
         sys.stdout.flush()
     else:
-        sys.stdout.write('\n\033[1;31m[-] No Open Redirect vulnerabilities found\033[0m\n')
+        sys.stdout.write('\033[1;31m[-] No Open Redirect vulnerabilities found\033[0m\n')
         sys.stdout.flush()
+    print()
     
     return urls_vulnerables

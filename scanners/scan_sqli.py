@@ -21,7 +21,6 @@ init()
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, random_agent=False):
-    print()
     sys.stdout.write('\033[1;36m<<<<<<<<<<<<\033[0m Testing SQL Injection \033[1;36m>>>>>>>>>>>>>>\033[0m\n')
     print()
     sys.stdout.flush()
@@ -305,14 +304,13 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
     with stdout_lock:
         sys.stdout.write('\r' + ansi.clear_line())
         sys.stdout.flush()
-        sys.stdout.write('\n')  # Asegurar salto de línea final
-        sys.stdout.flush()
-    
+    print()
     if vulnerable_endpoints:
-        sys.stdout.write(f'\n\033[1;36m[+] Found {len(vulnerable_endpoints)} potential SQLi vulnerabilities\033[0m\n')
+        sys.stdout.write(f'\033[1;36m[+] Found {len(vulnerable_endpoints)} potential SQLi vulnerabilities\033[0m\n')
         sys.stdout.flush()
     else:
-        sys.stdout.write('\n\033[1;31m[-] No SQLi vulnerabilities found\033[0m\n')
+        sys.stdout.write('\033[1;31m[-] No SQLi vulnerabilities found\033[0m\n')
         sys.stdout.flush()
+    print()
     
     return urls_vulnerables

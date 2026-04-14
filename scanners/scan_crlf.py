@@ -6,7 +6,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from vulnerability_manager import vuln_manager
 from parametizer.progress import update_progress, print_vulnerability
 from parametizer.core.headers import get_headers
-from concurrent.futures import ThreadPoolExecutor
+from parametizer.bounded_pool import run_threadpool_in_chunks
 from colorama import Fore, ansi, init
 from typing import List, Optional, Set, Tuple
 
@@ -373,8 +373,7 @@ def is_crlf_vulnerable(
     return False, "No payload reflection found in response headers"
 
 def crlf(urip, urif, urls_vulnerables, threads, custom_headers, random_agent):   
-    print()
-    print('\033[1;36m<<<<<<<<<<<<\033[0m Testing CRLF Injection \033[1;36m>>>>>>>>>>>>>>\033[0m\n')
+    print('\033[1;36m<<<<<<<<<<<<\033[0m Testing CRLF Injection \033[1;36m>>>>>>>>>>>>>>\033[0m')
     print()
     
     crlf_payloads = [
@@ -752,34 +751,18 @@ POST data sent: {data}
                     steps_done += rem
                     update_progress(current, total_tasks)
 
-    # Crear tareas de manera más eficiente
-    tasks = []
-    
-    # Agrupar tareas por URL para evitar duplicación
-    for url in urip + urif:
-        tasks.append((test_url, url))
-    
-    # Procesar TODAS las tareas en paralelo para máximo rendimiento
-    with ThreadPoolExecutor(max_workers=threads) as executor:
-        # Enviar todas las tareas al pool de hilos
-        futures = [executor.submit(task[0], *task[1:]) for task in tasks]
-        
-        # Esperar a que se completen todas (pero en paralelo)
-        for future in futures:
-            try:
-                future.result()
-            except Exception:
-                pass
-    
+    run_threadpool_in_chunks(test_url, urip + urif, threads)
+
     # Limpiar salida final
     with stdout_lock:
         sys.stdout.write('\r' + ansi.clear_line())
         sys.stdout.flush()
     
-        print()  # Asegurar salto de línea final
+        print()
     if found:
-        print(f'\n{Fore.CYAN}[+] Found {len(found)} potential CRLF vulnerabilities\n')
+        print(f'{Fore.CYAN}[+] Found {len(found)} potential CRLF vulnerabilities')
     else:
-        print('\n\033[1;31m[-] No CRLF vulnerabilities found\033[0m\n')
+        print('\033[1;31m[-] No CRLF vulnerabilities found\033[0m')
+    print()
     
     return urls_vulnerables

@@ -5,7 +5,7 @@ from parametizer.progress import update_progress, print_vulnerability
 from parametizer.core.headers import get_headers
 from colorama import Cursor, Fore, ansi, init
 from threading import Lock
-from concurrent.futures import ThreadPoolExecutor
+from parametizer.bounded_pool import run_threadpool_pending_bounded
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from vulnerability_manager import vuln_manager
@@ -84,8 +84,7 @@ def get_baseline_response(method, url, data=None, custom_headers=None, random_ag
         return ""  # Cualquier otro error
 
 def lfi(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_agent):
-    print()
-    print('\033[1;36m<<<<<<<<<<<<\033[0m Testing Local File Inclusion \033[1;36m>>>>>>>>>>>>>>\033[0m\n')
+    print('\033[1;36m<<<<<<<<<<<<\033[0m Testing Local File Inclusion \033[1;36m>>>>>>>>>>>>>>\033[0m')
     print()
     total_tasks = (len(urip) * 2 + len(urif)) * len(wordlist)
     current = 0
@@ -229,36 +228,24 @@ def lfi(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
             update_progress(current, total_tasks)
 
     # Crear tareas de manera más eficiente
-    tasks = []
-    
-    # Agrupar tareas por URL para evitar duplicación
-    for url in urip:
-        for payload in wordlist:
-            tasks.append((test_get_post, url, payload, "get"))
-            tasks.append((test_get_post, url, payload, "post"))
-    
-    for url in urif:
-        for payload in wordlist:
-            tasks.append((test_form, url, payload))
-    
-    # Procesar TODAS las tareas en paralelo para máximo rendimiento
-    with ThreadPoolExecutor(max_workers=threads) as executor:
-        # Enviar todas las tareas al pool de hilos
-        futures = [executor.submit(task[0], *task[1:]) for task in tasks]
-        
-        # Esperar a que se completen todas (pero en paralelo)
-        for future in futures:
-            try:
-                future.result()
-            except Exception:
-                pass
+    def _iter_lfi_tasks():
+        for url in urip:
+            for payload in wordlist:
+                yield (test_get_post, url, payload, "get")
+                yield (test_get_post, url, payload, "post")
+        for url in urif:
+            for payload in wordlist:
+                yield (test_form, url, payload)
+
+    run_threadpool_pending_bounded(_iter_lfi_tasks(), threads)
 
     sys.stdout.write('\r' + ansi.clear_line())
     sys.stdout.flush()
-    print()  # Asegurar salto de línea final
+    print()
     if found:
-        print(f"\n\033[1;36m[+] Found {len(found)} potential LFI vulnerabilities\033[0m\n")
+        print(f"\033[1;36m[+] Found {len(found)} potential LFI vulnerabilities\033[0m")
     else:
-        print('\n\033[1;31m[-] No LFI vulnerabilities found\033[0m\n')
+        print('\033[1;31m[-] No LFI vulnerabilities found\033[0m')
+    print()
     
     return urls_vulnerables

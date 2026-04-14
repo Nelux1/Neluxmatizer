@@ -3,7 +3,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from vulnerability_manager import vuln_manager
-from concurrent.futures import ThreadPoolExecutor
+from parametizer.bounded_pool import run_threadpool_in_chunks
 from threading import Lock
 from parametizer.core.headers import get_headers
 from parametizer.progress import update_progress, print_vulnerability
@@ -12,7 +12,8 @@ from colorama import init, ansi
 init()
 
 def clickjacking(urip, urif, urls_vulnerables, threads, custom_headers, random_agent):
-    print('\033[1;36m<<<<<<<<<<<<\033[0m Testing Clickjacking \033[1;36m>>>>>>>>>>>>>\033[0m\n')
+    print('\033[1;36m<<<<<<<<<<<<\033[0m Testing Clickjacking \033[1;36m>>>>>>>>>>>>>\033[0m')
+    print()
 
     # Configuración
     total_tasks = len(urip) + len(urif)
@@ -97,36 +98,19 @@ def clickjacking(urip, urif, urls_vulnerables, threads, custom_headers, random_a
                 progress += 1
                 update_progress(progress, total_tasks)
 
-    # Crear tareas de manera más eficiente
-    tasks = []
-    
-    # Agrupar tareas por URL para evitar duplicación
-    for url in urip + urif:
-        if url not in found_urls:
-            tasks.append(url)
-    
-    # Procesar TODAS las tareas en paralelo para máximo rendimiento
-    with ThreadPoolExecutor(max_workers=threads) as executor:
-        # Enviar todas las tareas al pool de hilos
-        futures = [executor.submit(test_url, url) for url in tasks]
-        
-        # Esperar a que se completen todas (pero en paralelo)
-        for future in futures:
-            try:
-                future.result()
-            except Exception:
-                pass
-    
+    tasks = [u for u in urip + urif if u not in found_urls]
+    run_threadpool_in_chunks(test_url, tasks, threads)
+
     # Limpiar salida final
     with stdout_lock:
         sys.stdout.write('\r' + ansi.clear_line())
         sys.stdout.flush()
     
-        print()  # Asegurar salto de línea final
-    # Resultados
+        print()
     if found > 0:
-        print(f'\n\033[1;36m[+] Found {found} potential Clickjacking vulnerabilities\033[0m\n')
+        print(f'\033[1;36m[+] Found {found} potential Clickjacking vulnerabilities\033[0m')
     else:
-        print('\n\033[1;31m[-] No Clickjacking vulnerabilities found\033[0m\n')
+        print('\033[1;31m[-] No Clickjacking vulnerabilities found\033[0m')
+    print()
     
     return urls_vulnerables

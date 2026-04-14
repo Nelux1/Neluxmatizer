@@ -537,7 +537,11 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
                 sys.stdout.flush()
 
         has_param_surface = bool(urip or urif)
-        raw_collected = list(dict.fromkeys(uri)) if uri else []
+        # -param: uri ya viene deduplicado; evitar duplicar millones de referencias en RAM
+        if param_endpoints is not None:
+            raw_collected = uri if uri else []
+        else:
+            raw_collected = list(dict.fromkeys(uri)) if uri else []
         # CORS / Clickjacking: responden por headers; usar todas las URLs recolectadas (no solo ?query=)
         urip_cl = raw_collected if raw_collected else (urip or [])
         urif_cl = urif or []

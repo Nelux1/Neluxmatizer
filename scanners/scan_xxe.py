@@ -10,7 +10,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from vulnerability_manager import vuln_manager
-from concurrent.futures import ThreadPoolExecutor
+from parametizer.bounded_pool import run_threadpool_pending_bounded
 import urllib3, sys
 
 init()
@@ -74,7 +74,6 @@ def is_xxe_response(text, payload):
     return False, "No XXE vulnerability", "NONE"
 
 def xxe(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, random_agent=False):
-    print()
     sys.stdout.write('\033[1;36m<<<<<<<<<<<<\033[0m Testing XML External Entity (XXE) \033[1;36m>>>>>>>>>>>>>>\033[0m\n')
     print()
     sys.stdout.flush()
@@ -168,48 +167,33 @@ def xxe(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
     def test_form_xml(url, payload):
         test_post_xml(url, payload)
 
-    # Crear tareas de manera más eficiente
-    tasks = []
-    
-    # Agrupar tareas por URL para evitar duplicación
-    for url in urip:
-        parsed = urlparse(url)
-        base = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-        if base not in vulnerable_endpoints:
-            for payload in wordlist:
-                tasks.append((test_post_xml, url, payload))
-    
-    for url in urif:
-        parsed = urlparse(url)
-        base = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-        if base not in vulnerable_endpoints:
-            for payload in wordlist:
-                tasks.append((test_form_xml, url, payload))
-    
-    # Procesar TODAS las tareas en paralelo para máximo rendimiento
-    with ThreadPoolExecutor(max_workers=threads) as executor:
-        # Enviar todas las tareas al pool de hilos
-        futures = [executor.submit(task[0], *task[1:]) for task in tasks]
-        
-        # Esperar a que se completen todas (pero en paralelo)
-        for future in futures:
-            try:
-                future.result()
-            except Exception:
-                pass
-    
+    def _iter_xxe_tasks():
+        for url in urip:
+            parsed = urlparse(url)
+            base = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+            if base not in vulnerable_endpoints:
+                for payload in wordlist:
+                    yield (test_post_xml, url, payload)
+        for url in urif:
+            parsed = urlparse(url)
+            base = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+            if base not in vulnerable_endpoints:
+                for payload in wordlist:
+                    yield (test_form_xml, url, payload)
+
+    run_threadpool_pending_bounded(_iter_xxe_tasks(), threads)
+
     # Limpiar salida final
     with stdout_lock:
         sys.stdout.write('\r' + ansi.clear_line())
         sys.stdout.flush()
-    
-        sys.stdout.write('\n')  # Asegurar salto de línea final
-        sys.stdout.flush()
+    print()
     if found > 0:
-        sys.stdout.write(f'\n\033[1;36m[+] Found {found} potential XXE vulnerabilities\033[0m\n')
+        sys.stdout.write(f'\033[1;36m[+] Found {found} potential XXE vulnerabilities\033[0m\n')
         sys.stdout.flush()
     else:
-        sys.stdout.write('\n\033[1;31m[-] No XXE vulnerabilities found\033[0m\n')
+        sys.stdout.write('\033[1;31m[-] No XXE vulnerabilities found\033[0m\n')
         sys.stdout.flush()
+    print()
     
     return urls_vulnerables

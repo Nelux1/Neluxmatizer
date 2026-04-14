@@ -6,12 +6,11 @@ from os import system
 from urllib import parse as urlparse
 import sys
 import argparse
-from colorama import Back, Fore, init
+from colorama import Back, Fore, Cursor, Style, init
 from scanners.scan_lista import all_list
 from parametizer.core.headers import parse_headers
 from parametizer.core.save_it import save_output
 from parametizer.interrupt import signal_handler
-from colorama import Back, Fore, Cursor, init
 import time 
 start_time = time.time()
 init()
@@ -201,6 +200,12 @@ def selector():
             f'{Fore.CYAN}[+] Direct endpoint mode: {len(param_endpoints)} URL(s) from {args.param_file} (no crawl / discovery){Fore.RESET}\n'
         )
         sys.stdout.flush()
+        if len(param_endpoints) > 150_000:
+            sys.stdout.write(
+                f'{Style.BRIGHT}{Fore.RED}[!] Very large URL list: high RAM usage; split the file, lower -t, '
+                f'and/or set: export NELUXMATIZER_POOL_CHUNK=2048 to cap pool batch size.{Style.RESET_ALL}\n'
+            )
+            sys.stdout.flush()
     elif args.url:
          url.append(str(args.url))                
     if args.usedlist and not args.param_file:

@@ -3,7 +3,6 @@ from urllib.error import URLError
 from parametizer.progress import update_progress, print_vulnerability
 from parametizer.core.headers import get_headers
 from colorama import Cursor, init, ansi
-from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 import threading
 import sys
@@ -11,6 +10,7 @@ import os
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from vulnerability_manager import vuln_manager
+from parametizer.bounded_pool import run_threadpool_in_chunks
 
 init()
 
@@ -43,8 +43,7 @@ def is_cors_vulnerable(response_headers, origin):
     return False, "No CORS vulnerability", "NONE"
 
 def cors(urip, urif, urls_vulnerables, threads, custom_headers=None, random_agent=False):
-    print()
-    print('\033[1;36m<<<<<<<<<<<<\033[0m Testing Cross-Origin Resource Sharing \033[1;36m>>>>>>>>>>>>>\033[0m\n')
+    print('\033[1;36m<<<<<<<<<<<<\033[0m Testing Cross-Origin Resource Sharing \033[1;36m>>>>>>>>>>>>>\033[0m')
     print()
 
     total_tasks = len(urip) + len(urif)
@@ -116,6 +115,10 @@ def cors(urip, urif, urls_vulnerables, threads, custom_headers=None, random_agen
                         baseline_cache[baseline_key] = baseline_response.headers
                     except (requests.exceptions.Timeout, requests.exceptions.RequestException):
                         baseline_cache[baseline_key] = {}
+                    # Escaneos masivos: el caché por base_url no puede crecer sin límite (OOM)
+                    if len(baseline_cache) > 40000:
+                        for _k in list(baseline_cache.keys())[:20000]:
+                            del baseline_cache[_k]
                 
                 try:
                     response = requests.get(url, headers=headers, verify=False, timeout=5)
@@ -187,34 +190,19 @@ def cors(urip, urif, urls_vulnerables, threads, custom_headers=None, random_agen
                     current += 1
                     update_progress(current, total_tasks)
 
-    # Crear tareas de manera más eficiente
-    tasks = []
-    
-    # Agrupar tareas por URL para evitar duplicación
-    for url in urip + urif:
-        tasks.append((test_url, url))
-    
-    # Procesar TODAS las tareas en paralelo para máximo rendimiento
-    with ThreadPoolExecutor(max_workers=threads) as executor:
-        # Enviar todas las tareas al pool de hilos
-        futures = [executor.submit(task[0], *task[1:]) for task in tasks]
-        
-        # Esperar a que se completen todas (pero en paralelo)
-        for future in futures:
-            try:
-                future.result()
-            except Exception:
-                pass
-    
+    # Por lotes: no crear un Future por URL (OOM con listas enormes en -param)
+    run_threadpool_in_chunks(test_url, urip + urif, threads)
+
     # Limpiar salida final
     with stdout_lock:
         sys.stdout.write('\r' + ansi.clear_line())
         sys.stdout.flush()
     
-        print()  # Asegurar salto de línea final
+        print()
     if found:
-        print(f'\n\033[1;36m[+] Found {len(found)} potential CORS vulnerabilities\033[0m\n')
+        print(f'\033[1;36m[+] Found {len(found)} potential CORS vulnerabilities\033[0m')
     else:
-        print('\n\033[1;31m[-] No CORS vulnerabilities found\033[0m\n')
+        print('\033[1;31m[-] No CORS vulnerabilities found\033[0m')
+    print()
     
     return urls_vulnerables
