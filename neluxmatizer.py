@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+!/usr/bin/env python3
 #
 import signal
 import os
@@ -13,26 +13,92 @@ from parametizer.core.save_it import save_output
 from parametizer.interrupt import signal_handler
 import time 
 start_time = time.time()
-init()
+# Keep ANSI colors intact in Linux terminals (including Cursor terminal).
+init(autoreset=False, strip=False, convert=False)
+
+
+
+print()
+print()
+banners = [
+ r'''
+       ::::    ::: :::::::::: :::       :::    ::: :::    :::   :::   :::       ::: ::::::::::: ::::::::::: ::::::::: :::::::::: ::::::::: 
+     :+:+:   :+: :+:        :+:       :+:    :+: :+:    :+:  :+:+: :+:+:    :+: :+:   :+:         :+:          :+:  :+:        :+:    :+: 
+    :+:+:+  +:+ +:+        +:+       +:+    +:+  +:+  +:+  +:+ +:+:+ +:+  +:+   +:+  +:+         +:+         +:+   +:+        +:+    +:+  
+   +#+ +:+ +#+ +#++:++#   +#+       +#+    +:+   +#++:+   +#+  +:+  +#+ +#++:++#++: +#+         +#+        +#+    +#++:++#   +#++:++#:    
+  +#+  +#+#+# +#+        +#+       +#+    +#+  +#+  +#+  +#+       +#+ +#+     +#+ +#+         +#+       +#+     +#+        +#+    +#+    
+ #+#   #+#+# #+#        #+#       #+#    #+# #+#    #+# #+#       #+# #+#     #+# #+#         #+#      #+#      #+#        #+#    #+#     
+###    #### ########## ########## ########  ###    ### ###       ### ###     ### ###     ########### ######### ########## ###    ###      
+ Tool for Hackers by Nelux v1.1
+
+''',
+
+
+r'''
+     __   __     ______     __         __  __     __  __     __    __     ______     ______   __     ______     ______     ______    
+    /\ "-.\ \   /\  ___\   /\ \       /\ \/\ \   /\_\_\_\   /\ "-./  \   /\  __ \   /\__  _\ /\ \   /\___  \   /\  ___\   /\  == \   
+    \ \ \-.  \  \ \  __\   \ \ \____  \ \ \_\ \  \/_/\_\/_  \ \ \-./\ \  \ \  __ \  \/_/\ \/ \ \ \  \/_/  /__  \ \  __\   \ \  __<   
+     \ \_\\"\_\  \ \_____\  \ \_____\  \ \_____\   /\_\/\_\  \ \_\ \ \_\  \ \_\ \_\    \ \_\  \ \_\   /\_____\  \ \_____\  \ \_\ \_\ 
+      \/_/ \/_/   \/_____/   \/_____/   \/_____/   \/_/\/_/   \/_/  \/_/   \/_/\/_/     \/_/   \/_/   \/_____/   \/_____/   \/_/ /_/                                                                                                                                     
      
-sys.stdout.write("\033[1;36m"+'''
+     Pentester Tool v1.1 by Nelux
+''',
 
-    NNN     NNNN 
-    NNNN    NNNN EEEEEEEEEE LLLL      UUUU    UUU XXXX   XXXX
-    NNN NN  NNNN EEE        LLLL      UUUU    UUU   XX   XX                     
-    NNN  NN NNNN EEEEEEEE   LLLL      UUUU    UUU     XXX     MATIZER
-    NNN    NNNNN EEE        LLLL      UUUU    UUU   XX   XX   
-    NNN     NNNN EEEEEEEEEE LLLLLLLL  UUUUUUUUUUU XXXX   XXXX 
+r'''
+    ███╗   ██╗███████╗██╗     ██╗   ██╗██╗  ██╗
+    ████╗  ██║██╔════╝██║     ██║   ██║╚██╗██╔╝
+    ██╔██╗ ██║█████╗  ██║     ██║   ██║ ╚███╔╝ 
+    ██║╚██╗██║██╔══╝  ██║     ██║   ██║ ██╔██╗ 
+    ██║ ╚████║███████╗███████╗╚██████╔╝██╔╝ ██╗
+    ╚═╝  ╚═══╝╚══════╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝ MATIZER
+    Turbo Pentest Tool v1.1
+''',
 
-                                 by Marcos Suarez for pentesters Turbo v1.1 
+r'''
+    ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+    █ NELUXMATIZER LOADED █
+    █   by n31ux / v 1.1  █
+    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+'''
+]
 
-'''+ '\033[0;m')
-sys.stdout.flush()
+import random
 
-sys.stdout.write("\x1b[1;35m"+'EXIT PROGRAM WITH CRTL+C'+ '\033[0;m\n')
-sys.stdout.flush()
-sys.stdout.write('\n')
-sys.stdout.flush()
+RNG = random.SystemRandom()
+banner = RNG.choice(banners)
+BANNER_COLORS = [
+    ("\033[1;36m", "cyan"),
+    ("\033[1;97m", "white"),
+    ("\033[1;34m", "blue"),
+]
+
+def print_animated_banner(text, color="\033[1;36m", char_delay=0.0015, line_delay=0.03):
+    out = getattr(sys, "__stdout__", sys.stdout)
+    lines = text.strip("\n").split("\n")
+
+    for line in lines:
+        line = line.rstrip()
+        if not line:
+            out.write("\n")
+            continue
+        # Re-apply the chosen color on every line for terminals that reset style often.
+        out.write(color)
+        out.flush()
+        for ch in line:
+            out.write(ch)
+            out.flush()
+            time.sleep(char_delay)
+        out.write("\033[0m\n")
+        out.flush()
+        time.sleep(line_delay)
+    out.flush()
+
+
+banner_color, _banner_color_name = RNG.choice(BANNER_COLORS)
+print_animated_banner(banner, color=banner_color)
+OUT = getattr(sys, "__stdout__", sys.stdout)
+OUT.write("\x1b[1;35mEXIT PROGRAM WITH CRTL+C\033[0;m\n\n")
+OUT.flush()
 
 parser = argparse.ArgumentParser(prog="neluxmatizer")
 def parse_excepciones(value):
@@ -413,5 +479,6 @@ if __name__ == "__main__":
         sys.stdout.write(f"\n{Fore.YELLOW}[!] Program interrupted{Fore.RESET}\n")
         sys.stdout.flush()
         exit(0)
+
 
 
