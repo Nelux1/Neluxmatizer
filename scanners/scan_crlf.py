@@ -220,18 +220,6 @@ def _crlf_semantic_success(
         if crlf_probe_mark_lower in r and crlf_probe_mark_lower not in b:
             return f"X-Nelux-CRLF: {CRLF_PROBE_MARK} (semantic detection)"
 
-    if "x-xss-protection" in pl:
-        # FP común: baseline 4xx vs respuesta 2xx/3xx = otra ruta (CDN, SharePoint, login); el header
-        # X-XSS-Protection: 0 aparece en respuestas MS sin CRLF.
-        skip_xss_sem = False
-        if baseline_status is not None and response_status is not None:
-            if (baseline_status >= 400) != (response_status >= 400):
-                skip_xss_sem = True
-        if not skip_xss_sem:
-            b = bh.get("x-xss-protection", "").strip()
-            r = rh.get("x-xss-protection", "").strip()
-            if r == "0" and r != b:
-                return "X-XSS-Protection: 0 (semantic detection)"
 
     if "x-forwarded-for" in pl and "127.0.0.1" in pl:
         b = bh.get("x-forwarded-for", "")
@@ -274,8 +262,6 @@ def _crlf_semantic_strong_under_error_status(sem_reason: str) -> bool:
         return True
     if "x-forwarded-for" in lower or "x-forwarded-host" in lower:
         return True
-    if "x-xss-protection" in lower:
-        return False
     return False
 
 
@@ -380,7 +366,6 @@ def crlf(urip, urif, urls_vulnerables, threads, custom_headers, random_agent):
         "%0d%0aSet-Cookie: CRLF=Injected",
         "%0d%0aX-CRLF-Probe: nelux-crlf-1%0d%0a",
         "%0d%0aContent-Length: 0%0d%0a%0d%0aHTTP/1.1 200 OK%0d%0aContent-Type: text/html%0d%0aContent-Length: 19%0d%0a%0d%0a<html>CRLF</html>",
-        "%0d%0aX-XSS-Protection: 0%0d%0a",
         "%0d%0aX-Forwarded-For: 127.0.0.1%0d%0a",
         "%0d%0aX-Forwarded-Host: evil.com%0d%0a",
         "%0d%0aLocation:%20https://example.com%0d%0a",
