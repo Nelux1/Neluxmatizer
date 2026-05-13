@@ -139,6 +139,14 @@ def generate_pocs_for_domain(domain_vulnerabilities, domain, oob_domain=None):
                         sys.stdout.write(f"\n🔍 Generating PoC for Open Redirect: {len(vulns)} URLs\n")
                         sys.stdout.flush()
                         result = poc_gen.generate_redirect_poc(vulns, domain=domain)
+
+                    elif vuln_type == 'HOSTHEADER':
+                        sys.stdout.write(f"\n🔍 Generating PoC for Host Header Injection: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_hostheader_poc(vulns, domain=domain)
+
+                    else:
+                        continue
                     
                     # Procesar resultado
                     if result.get('html_filename'):
@@ -235,7 +243,15 @@ def generate_pocs_for_vulnerabilities(vulnerabilities_by_type, target_url, resul
                         sys.stdout.write(f"\n🔍 Generating PoC for Open Redirect: {len(vulns)} URLs\n")
                         sys.stdout.flush()
                         result = poc_gen.generate_redirect_poc(vulns)
-                    
+
+                    elif vuln_type == 'HOSTHEADER':
+                        sys.stdout.write(f"\n🔍 Generating PoC for Host Header Injection: {len(vulns)} URLs\n")
+                        sys.stdout.flush()
+                        result = poc_gen.generate_hostheader_poc(vulns)
+
+                    else:
+                        continue
+
                     # Procesar resultado
                     if result.get('html_filename'):
                         sys.stdout.write(f"✅ {vuln_type} PoC generado: {result['html_filename']}\n")
@@ -1012,6 +1028,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
     sys.stdout.write('\033[1;31mCLOSE PROGRAM\033[0m\n')
     sys.stdout.flush()
     sys.exit(0)
+
 
 
 
