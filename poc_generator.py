@@ -4695,6 +4695,165 @@ class PoCGenerator:
         }
         """
     
+    def generate_hostheader_poc(self, vulnerable_urls, screenshot=False, domain=None):
+        """Genera PoC para Host Header Injection (X-Forwarded-Host, etc.)"""
+        from urllib.parse import urlparse
+        import hashlib
+        import json
+
+        if domain:
+            base_domain = domain
+            clean_domain = base_domain.replace(':', '_').replace('/', '_').replace('\\', '_')
+        else:
+            if vulnerable_urls:
+                raw_url = vulnerable_urls[0].split(' [header:')[0].strip()
+                base_domain = urlparse(raw_url).netloc or "unknown"
+                clean_domain = base_domain.replace('www.', '').replace('.', '_').replace(':', '_')
+            else:
+                base_domain = "unknown"
+                clean_domain = "unknown"
+
+        html_filename = f"{clean_domain}_hostheader.html"
+
+        # Parsear entradas: "http://url [header:X-Forwarded-Host]"
+        vuln_data = []
+        for entry in vulnerable_urls:
+            if ' [header:' in entry:
+                url_part, rest = entry.split(' [header:', 1)
+                hdr = rest.rstrip(']').strip()
+            else:
+                url_part = entry
+                hdr = "X-Forwarded-Host"
+            url_part = url_part.strip()
+            vuln_data.append({'url': url_part, 'header': hdr})
+
+        dropdown_options = '\n'.join(
+            f'<option value="{i}">{html.escape(v["url"][:70])} [{v["header"]}]</option>'
+            for i, v in enumerate(vuln_data)
+        )
+        vuln_json = json.dumps([{'url': v['url'], 'header': v['header']} for v in vuln_data])
+        url_hash = hashlib.md5('|'.join(v['url'] for v in vuln_data).encode()).hexdigest()[:8]
+
+        html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Host Header Injection PoC - {base_domain}</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }}
+        .header {{ background: #8e44ad; color: white; padding: 20px; border-radius: 5px; text-align: center; }}
+        .url-box {{ background: white; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 5px solid #8e44ad; }}
+        .button {{ background: #3498db; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }}
+        .button:hover {{ background: #2980b9; }}
+        .code {{ background: #2c3e50; color: #ecf0f1; padding: 15px; border-radius: 5px; font-family: monospace; font-size: 13px; white-space: pre-wrap; word-break: break-all; }}
+        .dropdown-container {{ background: white; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 5px solid #3498db; }}
+        .dropdown {{ width: 100%; padding: 10px; border: 1px solid #bdc3c7; border-radius: 5px; font-size: 14px; }}
+        .vuln-info {{ background: #f8f9fa; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 5px solid #28a745; }}
+        .warning {{ background: #f8d7da; color: #721c24; padding: 10px; border-radius: 5px; margin: 10px 0; }}
+        .impact {{ background: #fff3cd; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 5px solid #ffc107; }}
+        .badge {{ display: inline-block; background: #8e44ad; color: white; padding: 3px 8px; border-radius: 3px; font-size: 12px; font-family: monospace; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚨 Host Header Injection PoC</h1>
+        <p>Target: <strong>{base_domain}</strong></p>
+        <p>Found <strong>{len(vuln_data)}</strong> vulnerable endpoint(s)</p>
+    </div>
+
+    <div class="dropdown-container">
+        <h3>🔍 Select Vulnerability to Reproduce</h3>
+        <select class="dropdown" id="vulnSelect" onchange="selectVuln()">
+            <option value="">Choose an endpoint...</option>
+            {dropdown_options}
+        </select>
+    </div>
+
+    <div class="url-box" id="vulnDetails" style="display:none">
+        <h3>📋 Vulnerable Endpoint</h3>
+        <p><strong>URL:</strong> <span id="displayUrl"></span></p>
+        <p><strong>Vulnerable Header:</strong> <span class="badge" id="displayHeader"></span></p>
+    </div>
+
+    <div id="reproSection" style="display:none">
+        <div class="url-box">
+            <h3>🖥️ Reproduction — curl</h3>
+            <div class="code" id="curlCmd"></div>
+            <button class="button" onclick="copyCurl()">📋 Copy curl</button>
+        </div>
+
+        <div class="url-box">
+            <h3>🐍 Reproduction — Python requests</h3>
+            <div class="code" id="pythonCmd"></div>
+            <button class="button" onclick="copyPython()">📋 Copy Python</button>
+        </div>
+    </div>
+
+    <div class="impact">
+        <h3>💥 Impact</h3>
+        <ul>
+            <li><strong>Password Reset Poisoning:</strong> If the app uses the Host header to build reset-link URLs, an attacker can redirect tokens to a controlled server.</li>
+            <li><strong>Web Cache Poisoning:</strong> Cached responses may contain attacker-controlled URLs served to other users.</li>
+            <li><strong>SSRF via Redirect:</strong> Internal services may trust forwarded host values to route requests.</li>
+            <li><strong>Open Redirect:</strong> Apps that use the Host header for redirect construction become open redirectors.</li>
+        </ul>
+        <div class="warning">
+            <strong>⚠️ Warning:</strong> Only test on systems you have explicit authorization to pentest.
+        </div>
+    </div>
+
+    <div class="vuln-info">
+        <h3>🛡️ Mitigation</h3>
+        <ul>
+            <li>Whitelist allowed Host header values on the server side.</li>
+            <li>Never use <code>$_SERVER['HTTP_HOST']</code> / <code>request.get_host()</code> without validation for security-sensitive operations.</li>
+            <li>Set an explicit base URL in the application config instead of deriving it from the request.</li>
+            <li>Configure web servers (nginx/Apache) to reject requests with unexpected Host headers.</li>
+        </ul>
+    </div>
+
+    <script>
+        const vulns = {vuln_json};
+
+        function selectVuln() {{
+            const idx = parseInt(document.getElementById('vulnSelect').value);
+            if (isNaN(idx)) return;
+            const v = vulns[idx];
+
+            document.getElementById('displayUrl').textContent = v.url;
+            document.getElementById('displayHeader').textContent = v.header;
+            document.getElementById('vulnDetails').style.display = 'block';
+            document.getElementById('reproSection').style.display = 'block';
+
+            const curl = `curl -sk -H "${{v.header}}: evil.com" "${{v.url}}"`;
+            document.getElementById('curlCmd').textContent = curl;
+
+            const python = `import requests\\n\\nurl = "${{v.url}}"\\nheaders = {{\\n    "${{v.header}}": "evil.com"\\n}}\\n\\nr = requests.get(url, headers=headers, verify=False, allow_redirects=False)\\nprint(r.status_code, r.text[:500])`;
+            document.getElementById('pythonCmd').textContent = python;
+        }}
+
+        function copyCurl() {{
+            navigator.clipboard.writeText(document.getElementById('curlCmd').textContent);
+        }}
+
+        function copyPython() {{
+            navigator.clipboard.writeText(document.getElementById('pythonCmd').textContent);
+        }}
+    </script>
+</body>
+</html>"""
+
+        html_path = os.path.join(self.poc_dir, html_filename)
+        with open(html_path, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+
+        sys.stdout.write(f"✅ HOSTHEADER PoC generado: {html_filename}\n")
+        sys.stdout.flush()
+        return {
+            'html_filename': html_filename,
+            'html_path': html_path,
+            'vuln_count': len(vuln_data),
+        }
+
     def _generate_lfi_url(self, target_url, lfi_param, payload):
         """Genera una URL LFI con el payload especificado"""
         from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
