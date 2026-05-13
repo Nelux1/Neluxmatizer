@@ -2986,8 +2986,17 @@ class PoCGenerator:
     
     def generate_rce_poc(self, target_url, method="GET", screenshot=False, domain=None):
         """Genera PoC para RCE"""
+        # Acepta tanto una lista de URLs como una URL individual
+        if isinstance(target_url, list):
+            vulnerable_urls = target_url
+            target_url = target_url[0] if target_url else ""
+        else:
+            vulnerable_urls = [target_url] if target_url else []
+
+        if not target_url:
+            return {'html_filename': None}
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Crear un hash único basado en la URL para evitar sobrescribir PoCs
         import hashlib
         url_hash = hashlib.md5(target_url.encode()).hexdigest()[:8]
         
@@ -4700,3 +4709,4 @@ class PoCGenerator:
         new_query = urlencode(query_params, doseq=True)
         new_parsed = parsed._replace(query=new_query)
         return urlunparse(new_parsed)
+
