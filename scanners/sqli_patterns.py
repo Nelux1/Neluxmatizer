@@ -1,8 +1,10 @@
 """
 Detección error-based SQLi a partir del cuerpo de la respuesta.
 Evita usar "syntax error" aislado sin contexto SQL.
+Soporta respuestas HTML y JSON (APIs REST modernas).
 """
 from __future__ import annotations
+import json as _json
 
 # Fragmentos de alta confianza (motores, drivers, mensajes típicos)
 SQLI_ERROR_FRAGMENTS: tuple[str, ...] = (
@@ -108,12 +110,45 @@ _SYNTAX_ERROR_SQL_CONTEXT: tuple[str, ...] = (
 )
 
 
+def _json_strings(obj, depth: int = 0) -> list:
+    """Extrae recursivamente todos los strings de un objeto JSON."""
+    if depth > 8:
+        return []
+    if isinstance(obj, str):
+        return [obj]
+    if isinstance(obj, dict):
+        out = []
+        for v in obj.values():
+            out.extend(_json_strings(v, depth + 1))
+        return out
+    if isinstance(obj, list):
+        out = []
+        for item in obj:
+            out.extend(_json_strings(item, depth + 1))
+        return out
+    return []
+
+
 def is_sqli_error_response(text: str) -> bool:
     if not isinstance(text, str) or not text.strip():
         return False
-    lowered = text.lower()
-    if any(frag in lowered for frag in SQLI_ERROR_FRAGMENTS):
-        return True
-    if "syntax error" in lowered:
-        return any(ctx in lowered for ctx in _SYNTAX_ERROR_SQL_CONTEXT)
+
+    # Construir lista de textos a chequear: el body completo + strings JSON si aplica
+    candidates = [text]
+    stripped = text.strip()
+    if stripped.startswith(("{", "[")):
+        try:
+            obj = _json.loads(text)
+            candidates.extend(_json_strings(obj))
+        except Exception:
+            pass
+
+    for candidate in candidates:
+        lowered = candidate.lower()
+        if any(frag in lowered for frag in SQLI_ERROR_FRAGMENTS):
+            return True
+        if "syntax error" in lowered:
+            if any(ctx in lowered for ctx in _SYNTAX_ERROR_SQL_CONTEXT):
+                return True
+
     return False
