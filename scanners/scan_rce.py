@@ -301,5 +301,3 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
     print()
     
     return urls_vulnerables
-
-    return urls_vulnerables
