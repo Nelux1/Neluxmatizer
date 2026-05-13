@@ -3,6 +3,7 @@ from scanners.scan_lfi import lfi
 from scanners.scan_xxe import xxe
 from parametizer.core.save_it import save_output
 from scanners.scan_redirect import redirect
+from scanners.scan_hostheader import hostheader_injection
 from scanners.scan_ssrf import ssrf
 from scanners.scan_ssti import ssti
 from scanners.scan_clickjacking import clickjacking
@@ -259,7 +260,7 @@ def generate_pocs_for_vulnerabilities(vulnerabilities_by_type, target_url, resul
 
 
 def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
-             urls_vulnerables, threads, payloads, custom_headers, random_agent, oob_domain=None, poc=False, cookies=None, auth_token=None, checkpoint_manager=None, checkpoint_id=None, param_endpoints=None):
+             urls_vulnerables, threads, payloads, custom_headers, random_agent, oob_domain=None, poc=False, cookies=None, auth_token=None, checkpoint_manager=None, checkpoint_id=None, param_endpoints=None, hh=False):
 
     # Counters for final report
     total_urls = len(urls)
@@ -323,7 +324,8 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
         'CRLF': [],
         'CORS': [],
         'CLICKJACKING': [],
-        'REDIRECT': []
+        'REDIRECT': [],
+        'HOSTHEADER': [],
     }
     
     # 🔒 BLOCK HANDLER SYSTEM
@@ -573,7 +575,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             save_checkpoint_for_url(u)
             continue
 
-        if not has_param_surface and raw_collected and not (cl or c):
+        if not has_param_surface and raw_collected and not (cl or c or hh):
             sys.stdout.write(f'\n\033[1;31m[-] No parameters found for {scope_label}\033[0m\n')
             sys.stdout.flush()
 
@@ -615,7 +617,16 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             clickjacking_vulns = clickjacking(urip_cl, urif_cl, [], threads, scan_headers, random_agent)
             vulnerabilities_by_type['CLICKJACKING'].extend(clickjacking_vulns)
             urls_vulnerables.extend(clickjacking_vulns)
-        
+
+        if hh:
+            scan_headers = custom_headers
+            if auth_manager and auth_manager.is_authenticated():
+                scan_headers = auth_manager.get_session_headers(custom_headers)
+            hh_targets = urip_cl if urip_cl else (urip or [])
+            hh_vulns = hostheader_injection(hh_targets, [], threads, scan_headers, random_agent)
+            vulnerabilities_by_type['HOSTHEADER'].extend(hh_vulns)
+            urls_vulnerables.extend(hh_vulns)
+
         if c:
             # 🔒 CHECK FOR BLOCKS BEFORE SCANNING
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
@@ -768,12 +779,22 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
                 continue
             
             wordlist = payloads if payloads else [
+                # Básicos ya existentes
                 '////google.com/',
                 'https:///google.com/',
                 '/https:google.com',
-                '<>javascript:alert(1);',
                 'http:///////////google.com',
-                'javascript:alert(1)'
+                # Bypasses modernos
+                '//google.com',
+                'https://google.com',
+                '///google.com',
+                '\\google.com',
+                '\\/google.com',
+                '%2f%2fgoogle.com',
+                'https:%2f%2fgoogle.com',
+                '//google.com%09',
+                '//google.com%00',
+                '/redirect?url=//google.com',
             ]
             redirect_vulns = redirect(urip, urif, wordlist, [], threads, custom_headers, random_agent)
             vulnerabilities_by_type['REDIRECT'].extend(redirect_vulns)
@@ -991,5 +1012,6 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
     sys.stdout.write('\033[1;31mCLOSE PROGRAM\033[0m\n')
     sys.stdout.flush()
     sys.exit(0)
+
 
 
