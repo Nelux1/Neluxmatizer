@@ -1,7 +1,7 @@
 import requests
 import random
+import re
 import sys
-import os
 import os
 import threading
 import urllib.parse
@@ -12,9 +12,6 @@ from colorama import init, ansi
 from parametizer.progress import update_progress, print_vulnerability
 from parametizer.core.headers import get_headers
 import urllib3
-import sys
-import os
-import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from vulnerability_manager import vuln_manager
 
@@ -28,6 +25,32 @@ except ImportError:
 
 init()
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+_STATIC_EXTENSIONS = (
+    ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg",
+    ".woff", ".woff2", ".ico", ".ttf", ".eot", ".mp4", ".webm", ".pdf",
+)
+
+_TRACKING_PARAMS: frozenset = frozenset({
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "utm_id", "utm_reader", "utm_name", "utm_placing",
+    "fbclid", "gclid", "msclkid", "dclid", "twclid",
+    "_ga", "_gid", "_gl", "_hsenc", "_hsmi",
+    "mc_eid", "mc_cid",
+    "ref", "referrer",
+})
+
+_HASHED_PAGE_RE = re.compile(r'^[0-9a-f]{6,}_page$', re.IGNORECASE)
+
+
+def _is_static_path(url: str) -> bool:
+    path = urlparse(url).path.lower()
+    return path.endswith(_STATIC_EXTENSIONS)
+
+
+def _is_non_injectable_param(param: str) -> bool:
+    p = param.lower()
+    return p in _TRACKING_PARAMS or bool(_HASHED_PAGE_RE.match(p))
 
 
 def is_xss_response(text, payload):
@@ -68,8 +91,8 @@ def is_xss_response(text, payload):
     # Solo considerar válido si hay múltiples indicadores o el payload se refleja claramente
     indicator_count = sum(1 for indicator in xss_indicators if indicator in text.lower())
     
-    # Verificar que no sea solo un mensaje de error o página 404
-    if "404" in text or "not found" in text.lower() or "error" in text.lower():
+    # Evitar páginas de error HTTP claras (sin contenido de la app)
+    if "404 not found" in text.lower() or "403 forbidden" in text.lower() or "500 internal server error" in text.lower():
         return False
     
     # EVITAR FALSOS POSITIVOS: Si hay errores de SQL, NO es XSS
@@ -103,7 +126,7 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
         qs = parse_qs(parsed.query)
         headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
 
-        if not qs:
+        if not qs or _is_static_path(url):
             with lock:
                 current += 1
                 update_progress(current, total)
@@ -124,6 +147,9 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
             return
 
         for param in qs:
+            if _is_non_injectable_param(param):
+                continue
+
             # Cache de baseline para GET
             baseline_key = f"GET-{base_url}-{param}"
             if baseline_key not in baseline_cache:
@@ -184,6 +210,9 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
 
         # POST con los mismos parámetros
         for param in qs:
+            if _is_non_injectable_param(param):
+                continue
+
             # Cache de baseline para POST
             baseline_key = f"POST-{base_url}-{param}"
             if baseline_key not in baseline_cache:
@@ -215,26 +244,20 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
                 if r.status_code == 200 and is_xss_response(r.text, payload) and r.text != baseline:
                     # Verificar que el payload realmente se refleja (no solo en URL)
                     if payload in r.text or urllib.parse.unquote(payload) in r.text:
-                        key = f"{base_url}?{param}={payload}"
-                        if key not in vuln_set:
-                            vuln_set.add(key)
-                            # Marcar esta URL como explotada para evitar más pruebas
-                            vuln_set.add(url_key)
-                            
-                            # Salida sincronizada
-                            with stdout_lock:
-                                sys.stdout.write('\r' + ansi.clear_line())
-                                sys.stdout.flush()
-                                print(f"\033[1;32m[POST] [VULNERABLE]\033[0m {base_url}?{param}={quote(payload)}")
-                            
-                            # Guardar URL con payload para el PoC
-                            urls_vulnerables.append(f"{base_url}?{param}={quote(payload)}")
-                            found += 1
-                            # CORTAR INMEDIATAMENTE - no probar más payloads en esta URL
-                            with lock:
-                                current += 1
-                                update_progress(current, total)
-                            return
+                        if not vuln_manager.is_already_exploited(base_url, param):
+                            if not vuln_manager.verify_false_positive(base_url, payload, "POST", custom_headers, random_agent):
+                                vuln_manager.mark_as_exploited(base_url, param)
+                                vuln_manager.mark_as_exploited(base_url, base_url_only=True)
+
+                                with stdout_lock:
+                                    print_vulnerability(f"\033[1;32m[POST] [VULNERABLE]\033[0m {base_url}?{param}={quote(payload)}")
+
+                                urls_vulnerables.append(f"{base_url}?{param}={quote(payload)}")
+                                found += 1
+                                with lock:
+                                    current += 1
+                                    update_progress(current, total)
+                                return
             except requests.exceptions.Timeout:
                 continue
             except requests.exceptions.RequestException:
