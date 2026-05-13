@@ -1,4 +1,4 @@
-import requests, sys, threading, urllib3, random, urllib.parse
+import requests, sys, threading, urllib3, random, urllib.parse, re
 from urllib.parse import urlparse, parse_qs, urljoin, quote_plus
 from bs4 import BeautifulSoup
 from parametizer.progress import update_progress, print_vulnerability
@@ -13,51 +13,65 @@ from vulnerability_manager import vuln_manager
 init()
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-indicadores_esperados = [
-    'root:x:0:0:', 'bin:x:1:1:', 'daemon:x:2:2:', 'sys:x:3:3:',
-    'USER=', 'HOME=', 'SHELL=', 'UID=', 'GID=',
-    '127.0.0.1', 'localhost', 'RewriteEngine', '<title>Index of',
-    'fopen()', 'open_basedir', 'fpassthru', 'file_get_contents',
-    'failed to open stream', 'Operation not permitted', 'No such file',
-    'Permission denied', 'Access denied'
-]
+_STATIC_EXTENSIONS = (
+    ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg",
+    ".woff", ".woff2", ".ico", ".ttf", ".eot", ".mp4", ".webm", ".pdf",
+)
+
+_TRACKING_PARAMS: frozenset = frozenset({
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "utm_id", "utm_reader", "utm_name", "utm_placing",
+    "fbclid", "gclid", "msclkid", "dclid", "twclid",
+    "_ga", "_gid", "_gl", "_hsenc", "_hsmi",
+    "mc_eid", "mc_cid",
+    "ref", "referrer",
+})
+
+_HASHED_PAGE_RE = re.compile(r'^[0-9a-f]{6,}_page$', re.IGNORECASE)
+
+
+def _is_static_path(url: str) -> bool:
+    path = urlparse(url).path.lower()
+    return path.endswith(_STATIC_EXTENSIONS)
+
+
+def _is_non_injectable_param(param: str) -> bool:
+    p = param.lower()
+    return p in _TRACKING_PARAMS or bool(_HASHED_PAGE_RE.match(p))
+
 
 def is_lfi_response(text):
-    """Detecta respuestas de LFI de manera más específica y estricta"""
+    """Detecta respuestas de LFI de manera específica."""
     text_lower = text.lower()
-    
+
     # Evitar falsos positivos de mensajes genéricos del sitio
     if "this is not a real shop" in text_lower or "example php application" in text_lower:
         return False
-    
-    # Verificar si contiene contenido real de /etc/passwd
+
+    # Contenido real de /etc/passwd → LFI confirmado
     passwd_indicators = [
         'root:x:0:0:', 'daemon:x:1:1:', 'bin:x:2:2:', 'sys:x:3:3:',
         'adm:x:4:4:', 'lp:x:7:7:', 'mail:x:8:8:', 'news:x:9:9:',
         'uucp:x:10:10:', 'operator:x:11:0:', 'games:x:12:100:',
-        'man:x:13:62:', 'at:x:25:25:', 'cron:x:16:16:', 'ftp:x:21:21:',
-        'nobody:x:99:99:', 'systemd-network:x:192:192:', 'systemd-resolve:x:193:193:'
+        'man:x:13:62:', 'ftp:x:21:21:', 'nobody:x:99:99:',
     ]
-    
-    # Si contiene contenido real de /etc/passwd, es definitivamente LFI
     if any(indicator in text for indicator in passwd_indicators):
         return True
-    
-    # Verificar si contiene errores específicos de LFI
+
+    # Errores de PHP/filesystem que evidencian path traversal activo
+    # "Permission denied" y "Operation not permitted" confirman que el traversal
+    # llegó al archivo pero fue bloqueado por permisos del SO → LFI parcial
     lfi_errors = [
-        'open_basedir', 'fpassthru', 'file_get_contents',
-        'failed to open stream', 'Operation not permitted', 'No such file',
-        'Permission denied', 'Access denied'
+        'open_basedir restriction in effect',
+        'fpassthru()',
+        'file_get_contents(',
+        'failed to open stream',
+        'no such file or directory',
+        'permission denied',
+        'operation not permitted',
     ]
-    
-    # Solo considerar válido si hay múltiples indicadores de error
-    error_count = sum(1 for error in lfi_errors if error.lower() in text_lower)
-    
-    # EVITAR FALSOS POSITIVOS: Si hay open_basedir restriction, NO es LFI explotable
-    if "open_basedir restriction" in text_lower or "operation not permitted" in text_lower:
-        return False
-    
-    return error_count >= 2  # Al menos 2 indicadores para considerar válido
+    error_count = sum(1 for error in lfi_errors if error in text_lower)
+    return error_count >= 2
 
 def get_baseline_response(method, url, data=None, custom_headers=None, random_agent=False):
     headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
@@ -101,7 +115,7 @@ def lfi(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
         base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
         qs = parse_qs(parsed.query)
 
-        if not qs:
+        if not qs or _is_static_path(url):
             with lock:
                 current += 1
                 update_progress(current, total_tasks)
@@ -115,6 +129,9 @@ def lfi(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
             return
 
         for param in qs:
+            if _is_non_injectable_param(param):
+                continue
+
             # Verificar si ya se explotó esta combinación específica
             if vuln_manager.should_skip_url(base_url, param):
                 with lock:
