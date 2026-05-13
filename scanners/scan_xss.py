@@ -26,6 +26,27 @@ except ImportError:
 init()
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# ── DOM XSS headless config ────────────────────────────────────────────────────
+_DOM_XSS_PAYLOADS = [
+    "<img src=x onerror=\"alert('neluxXSS')\">",
+    "<svg/onload=\"alert('neluxXSS')\">",
+    "<iframe src=\"javascript:alert('neluxXSS')\">",
+    "<details open ontoggle=\"alert('neluxXSS')\">",
+]
+_DOM_XSS_MARKER    = "neluxXSS"
+_DOM_XSS_URL_LIMIT = 80    # max URLs testeadas headlessly
+_DOM_XSS_TIMEOUT   = 7000  # ms por navegación
+_DOM_XSS_SETTLE    = 2000  # ms de espera post-load para que el framework renderice
+
+# Parámetros que suelen reflejarse en el DOM (mayor prioridad en el batch headless)
+_DOM_XSS_PRIORITY_PARAMS: frozenset = frozenset({
+    "q", "s", "search", "query", "keyword", "keywords", "term", "terms",
+    "content", "text", "input", "name", "value", "msg", "message",
+    "comment", "data", "html", "title", "description", "body", "subject",
+    "url", "redirect", "return", "next", "to", "from", "path",
+    "file", "src", "source", "cat", "category", "type", "page",
+})
+
 _STATIC_EXTENSIONS = (
     ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg",
     ".woff", ".woff2", ".ico", ".ttf", ".eot", ".mp4", ".webm", ".pdf",
@@ -51,6 +72,148 @@ def _is_static_path(url: str) -> bool:
 def _is_non_injectable_param(param: str) -> bool:
     p = param.lower()
     return p in _TRACKING_PARAMS or bool(_HASHED_PAGE_RE.match(p))
+
+
+def _dom_xss_sort_key(url: str) -> int:
+    """Retorna 0 si la URL tiene al menos un param prioritario (va primero), 1 si no."""
+    try:
+        qs = parse_qs(urlparse(url).query)
+        if any(p.lower() in _DOM_XSS_PRIORITY_PARAMS for p in qs):
+            return 0
+    except Exception:
+        pass
+    return 1
+
+
+def _dom_xss_batch(
+    urls: list,
+    already_found: set,
+    custom_headers: dict = None,
+) -> list:
+    """
+    Fase DOM-based XSS con Playwright headless Chromium.
+
+    Lanza UNA sola sesión de browser y prueba hasta _DOM_XSS_URL_LIMIT URLs.
+    Detecta ejecución JS real escuchando el evento 'dialog' (alert/confirm/prompt).
+    Las URLs con parámetros de alta prioridad (q=, search=, content=…) se prueban primero.
+
+    Retorna lista de tuplas (url_con_payload, param, payload).
+    """
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from parametizer.headless_crawl import _prefer_bundled_playwright, _restore_sys_path
+    except ImportError:
+        return []
+
+    inserted = _prefer_bundled_playwright()
+    results = []
+
+    try:
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            return []
+
+        # Filtrar y ordenar: primero URLs candidatas con params prioritarios
+        candidates = [
+            u for u in urls
+            if parse_qs(urlparse(u).query) and not _is_static_path(u)
+            and f"{urlparse(u).scheme}://{urlparse(u).netloc}{urlparse(u).path}" not in already_found
+        ]
+        candidates.sort(key=_dom_xss_sort_key)
+        candidates = candidates[:_DOM_XSS_URL_LIMIT]
+        total_cand = len(candidates)
+
+        if total_cand == 0:
+            return []
+
+        dialog_history: list = []
+
+        def _on_dialog(dialog):
+            try:
+                msg = dialog.message or ""
+            except Exception:
+                msg = ""
+            dialog_history.append(msg)
+            try:
+                dialog.dismiss()
+            except Exception:
+                pass
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-software-rasterizer",
+                ],
+            )
+            try:
+                ctx = browser.new_context(
+                    ignore_https_errors=True,
+                    extra_http_headers=custom_headers or {},
+                )
+                page = ctx.new_page()
+                page.on("dialog", _on_dialog)
+
+                for idx, url in enumerate(candidates, 1):
+                    # Progress en línea (sobreescribe la misma línea)
+                    sys.stdout.write(
+                        f"\r\033[K  [DOM XSS] {idx}/{total_cand} | {url[:80]}"
+                    )
+                    sys.stdout.flush()
+
+                    parsed = urlparse(url)
+                    base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                    qs = parse_qs(parsed.query)
+
+                    vuln_found_for_url = False
+                    for param in qs:
+                        if _is_non_injectable_param(param):
+                            continue
+                        if vuln_found_for_url:
+                            break
+
+                        for payload in _DOM_XSS_PAYLOADS:
+                            dialog_history.clear()
+
+                            data = {p: "TEST123" for p in qs}
+                            data[param] = payload
+                            test_url_str = base_url + "?" + urllib.parse.urlencode(data, doseq=True)
+
+                            try:
+                                page.goto(
+                                    test_url_str,
+                                    wait_until="domcontentloaded",
+                                    timeout=_DOM_XSS_TIMEOUT,
+                                )
+                                page.wait_for_timeout(_DOM_XSS_SETTLE)
+                            except Exception:
+                                continue
+
+                            if any(_DOM_XSS_MARKER in m for m in dialog_history):
+                                sys.stdout.write("\r\033[K")
+                                sys.stdout.flush()
+                                results.append((test_url_str, param, payload))
+                                vuln_found_for_url = True
+                                break
+
+            finally:
+                sys.stdout.write("\r\033[K")
+                sys.stdout.flush()
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+
+    except Exception:
+        pass
+    finally:
+        _restore_sys_path(inserted)
+
+    return results
 
 
 def is_xss_response(text, payload):
@@ -377,16 +540,49 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
             return
         raise
 
-    # Limpiar salida final
+    # Limpiar salida fase HTTP
     with stdout_lock:
         sys.stdout.write('\r' + ansi.clear_line())
         sys.stdout.flush()
-        print()
 
+    # ── Fase DOM XSS (Playwright headless) ────────────────────────────────────
+    # Construye el set de bases ya encontradas en fase HTTP para no duplicar.
+    http_found_bases: set = set()
+    for vuln_url in list(urls_vulnerables):
+        try:
+            p0 = urlparse(vuln_url.split(" =>")[0].strip())
+            http_found_bases.add(f"{p0.scheme}://{p0.netloc}{p0.path}")
+        except Exception:
+            pass
+
+    print('\033[1;36m[*] DOM XSS phase (headless Chromium)...\033[0m')
+    dom_results = _dom_xss_batch(urip, http_found_bases, custom_headers)
+
+    dom_found = 0
+    for (dom_url, dom_param, dom_payload) in dom_results:
+        dom_parsed = urlparse(dom_url)
+        dom_base = f"{dom_parsed.scheme}://{dom_parsed.netloc}{dom_parsed.path}"
+        if not vuln_manager.is_already_exploited(dom_base, dom_param):
+            vuln_manager.mark_as_exploited(dom_base, dom_param)
+            vuln_manager.mark_as_exploited(dom_base, base_url_only=True)
+            print_vulnerability(
+                f"\033[1;32m[DOM] [VULNERABLE]\033[0m {dom_url}"
+            )
+            urls_vulnerables.append(dom_url)
+            found += 1
+            dom_found += 1
+
+    print()
     if found > 0:
-        print(f'\033[1;36m[+] Found {found} potential XSS vulnerabilities\033[0m')
+        http_n = found - dom_found
+        parts = []
+        if http_n > 0:
+            parts.append(f"{http_n} HTTP")
+        if dom_found > 0:
+            parts.append(f"{dom_found} DOM")
+        print(f'\033[1;36m[+] Found {found} XSS vulnerabilities ({", ".join(parts)})\033[0m')
     else:
         print('\033[1;31m[-] No XSS vulnerabilities found\033[0m')
     print()
-    
+
     return urls_vulnerables
