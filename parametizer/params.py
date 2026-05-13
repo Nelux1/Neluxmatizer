@@ -600,7 +600,7 @@ def parametizer(domain, output_file=None, threads=5):
     for url in all_urls:
         try:
             parsed = urlparse(url)
-            if parsed.scheme in ("http", "https") and not url.endswith(STATIC_EXTENSIONS):
+            if parsed.scheme in ("http", "https") and not parsed.path.lower().endswith(STATIC_EXTENSIONS):
                 filtered.add(url)
         except:
             continue
