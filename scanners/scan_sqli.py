@@ -1,5 +1,6 @@
 import requests
 import random
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse, parse_qs, urljoin, quote
 from bs4 import BeautifulSoup
@@ -19,6 +20,43 @@ except ImportError:
 
 init()
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+_STATIC_EXTENSIONS = (
+    ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg",
+    ".woff", ".woff2", ".ico", ".ttf", ".eot", ".mp4", ".webm", ".pdf",
+)
+
+# Parámetros de tracking/analytics que nunca llegan a una query SQL
+_TRACKING_PARAMS: frozenset = frozenset({
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "utm_id", "utm_reader", "utm_name", "utm_placing",
+    "fbclid", "gclid", "msclkid", "dclid", "twclid",
+    "_ga", "_gid", "_gl", "_hsenc", "_hsmi",
+    "mc_eid", "mc_cid",
+    "ref", "referrer",
+})
+
+# Params de paginación con prefijo hash generado por Symfony/WP/otros (ej: a1d72e41_page)
+_HASHED_PAGE_RE = re.compile(r'^[0-9a-f]{6,}_page$', re.IGNORECASE)
+
+
+def _is_static_path(url: str) -> bool:
+    """Retorna True si la URL apunta a un recurso estático (no testeable para SQLi)."""
+    path = urlparse(url).path.lower()
+    return path.endswith(_STATIC_EXTENSIONS)
+
+
+def _is_non_injectable_param(param: str) -> bool:
+    """
+    Retorna True si el parámetro es de tracking/analytics o paginación hash
+    y no tiene sentido testear SQLi en él.
+    """
+    p = param.lower()
+    if p in _TRACKING_PARAMS:
+        return True
+    if _HASHED_PAGE_RE.match(p):
+        return True
+    return False
 
 def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, random_agent=False):
     sys.stdout.write('\033[1;36m<<<<<<<<<<<<\033[0m Testing SQL Injection \033[1;36m>>>>>>>>>>>>>>\033[0m\n')
@@ -64,7 +102,7 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
         qs = parse_qs(parsed.query)
         headers=get_headers(random_agent=random_agent, custom_headers=custom_headers)
 
-        if not qs:
+        if not qs or _is_static_path(url):
             with lock:
                 current += 1
                 update_progress(current, total_tasks)
@@ -78,6 +116,9 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
             return
 
         for param in qs:
+            if _is_non_injectable_param(param):
+                continue
+
             # Verificar si ya se explotó esta combinación específica
             if vuln_manager.should_skip_url(base_url, param):
                 with lock:
@@ -96,7 +137,7 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
             try:
                 r = requests.get(base_url, params=data, headers=headers, verify=False, timeout=5)
                 
-                if is_sqli_error_response(r.text) and r.text.lower() != baseline:
+                if r.status_code in (200, 500) and is_sqli_error_response(r.text) and r.text.lower() != baseline:
                     # Verificar si ya se explotó esta combinación específica
                     if not vuln_manager.is_already_exploited(base_url, param):
                         # Verificar falso positivo (misma ruta con valor benigno en el parámetro)
@@ -135,13 +176,16 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
         qs = parse_qs(parsed.query)
 
         # Verificar si ya se explotó esta URL usando el sistema unificado
-        if vuln_manager.should_skip_url(base_url, base_url_only=True) or not qs:
+        if vuln_manager.should_skip_url(base_url, base_url_only=True) or not qs or _is_static_path(url):
             with lock:
                 current += 1
                 update_progress(current, total_tasks)
             return
 
         for param in qs:
+            if _is_non_injectable_param(param):
+                continue
+
             # Verificar si ya se explotó esta combinación específica
             if vuln_manager.should_skip_url(base_url, param):
                 with lock:
@@ -160,7 +204,7 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
             try:
                 r = requests.post(base_url, data=data, headers=get_headers(random_agent=random_agent, custom_headers=custom_headers), verify=False, timeout=5)
                 
-                if is_sqli_error_response(r.text) and r.text.lower() != baseline:
+                if r.status_code in (200, 500) and is_sqli_error_response(r.text) and r.text.lower() != baseline:
                     # Verificar si ya se explotó esta combinación específica
                     if not vuln_manager.is_already_exploited(base_url, param):
                         if not vuln_manager.verify_sqli_false_positive(
@@ -238,7 +282,7 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                 else:
                     res = requests.get(full_url, params=data, headers=headers, verify=False, timeout=5)
 
-                if is_sqli_error_response(res.text) and res.text.lower() != baseline:
+                if res.status_code in (200, 500) and is_sqli_error_response(res.text) and res.text.lower() != baseline:
                     if vuln_manager.is_already_exploited(full_url, form_param):
                         continue
                     if vuln_manager.verify_sqli_false_positive(
