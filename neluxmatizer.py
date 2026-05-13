@@ -170,7 +170,11 @@ parser.add_argument("-rce",
 parser.add_argument("-redirect",
                     dest="redirect",
                     help="Check OPENREDIRECT vulnerability or params.",
-                    action= 'store_true' )                                                                                
+                    action= 'store_true' )
+parser.add_argument("-hh", "--hostheader",
+                    dest="hostheader",
+                    help="Check Host Header Injection (X-Forwarded-Host, X-Host, etc.).",
+                    action='store_true')
 parser.add_argument("-poc", "--poc",
                     dest="poc",
                     help="Generate Proof of Concept (PoC) artifacts (HTML + screenshots)",
@@ -228,7 +232,7 @@ def selector():
     urls_vulnerables=[]
     threads=30
     fname = os.path.join(work_dir, "output", "urls_vulnerables.txt")
-    c = cl = cr = x = xe = l = s = r = rc = sr = sst = o = False
+    c = cl = cr = x = xe = l = s = r = rc = sr = sst = o = hh = False
     checkpoint_manager = None
     checkpoint_id = None
     param_endpoints = None
@@ -306,7 +310,9 @@ def selector():
     if args.rce:
          rc=True
     if args.redirect:
-         r=True        
+         r=True
+    if args.hostheader:
+         hh=True       
     if args.ssrf:
          sr=True 
     if args.ssti:
@@ -314,7 +320,7 @@ def selector():
     if args.xxe:
          xe=True                             
     if args.all:
-         c = cl = cr = x = xe = l = s = r = rc = sr = sst=True  
+         c = cl = cr = x = xe = l = s = r = rc = sr = sst = hh = True  
          if args.exceptions:          
            exceptions = args.exceptions
            if "cors" in exceptions:
@@ -433,7 +439,7 @@ def selector():
         checkpoint_id = None
                                        
     if not args.word:        
-      all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id,param_endpoints=param_endpoints)     
+      all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id,param_endpoints=param_endpoints,hh=hh)     
     if args.word:
          # Expand user path and verify file existence
          wordlist_path = os.path.expanduser(args.word)
@@ -450,13 +456,13 @@ def selector():
                  wordlist.append(i)             
          if args.xss:
            x=True                        
-           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id,param_endpoints=param_endpoints)
+           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id,param_endpoints=param_endpoints,hh=hh)
          if args.lfi:
            l=True
-           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id,param_endpoints=param_endpoints)     
+           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id,param_endpoints=param_endpoints,hh=hh)     
          if args.sql:
            s=True
-           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id,param_endpoints=param_endpoints)
+           all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id,param_endpoints=param_endpoints,hh=hh)
          if args.output:
            save_output(urls_vulnerables,fname,l)
      
@@ -479,5 +485,6 @@ if __name__ == "__main__":
         sys.stdout.write(f"\n{Fore.YELLOW}[!] Program interrupted{Fore.RESET}\n")
         sys.stdout.flush()
         exit(0)
+
 
 
