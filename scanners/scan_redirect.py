@@ -1,4 +1,5 @@
 import requests
+import re
 from urllib.parse import urlparse, parse_qs, urlencode
 from parametizer.bounded_pool import run_threadpool_tasks_in_chunks
 import random, sys, os, threading
@@ -17,6 +18,32 @@ except ImportError:
     BLOCK_HANDLER_AVAILABLE = False
 
 init()
+
+_STATIC_EXTENSIONS = (
+    ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg",
+    ".woff", ".woff2", ".ico", ".ttf", ".eot", ".mp4", ".webm", ".pdf",
+)
+
+_TRACKING_PARAMS: frozenset = frozenset({
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "utm_id", "utm_reader", "utm_name", "utm_placing",
+    "fbclid", "gclid", "msclkid", "dclid", "twclid",
+    "_ga", "_gid", "_gl", "_hsenc", "_hsmi",
+    "mc_eid", "mc_cid",
+    "ref", "referrer",
+})
+
+_HASHED_PAGE_RE = re.compile(r'^[0-9a-f]{6,}_page$', re.IGNORECASE)
+
+
+def _is_static_path(url: str) -> bool:
+    path = urlparse(url).path.lower()
+    return path.endswith(_STATIC_EXTENSIONS)
+
+
+def _is_non_injectable_param(param: str) -> bool:
+    p = param.lower()
+    return p in _TRACKING_PARAMS or bool(_HASHED_PAGE_RE.match(p))
 
 def get_base_domain(netloc):
     parts = netloc.lower().split('.')
@@ -60,7 +87,10 @@ def redirect(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, ra
         base = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
         params = parse_qs(parsed.query)
         headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
-        
+
+        if _is_static_path(url):
+            return
+
         # Crear sesión segura con manejo de bloqueos si está disponible
         if BLOCK_HANDLER_AVAILABLE:
             session = create_safe_request_session(headers)
@@ -69,6 +99,8 @@ def redirect(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, ra
             session.headers.update(headers)
 
         for param in params:
+            if _is_non_injectable_param(param):
+                continue
             # Verificar si ya se explotó esta combinación específica usando el sistema unificado
             if vuln_manager.should_skip_url(base, param):
                 continue
@@ -143,7 +175,12 @@ def redirect(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, ra
         params = parse_qs(parsed.query)
         headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
 
+        if _is_static_path(url):
+            return
+
         for param in params:
+            if _is_non_injectable_param(param):
+                continue
             clave = f"{base}|{param}"
             with lock:
                 if clave in vulnerable_endpoints:
@@ -240,5 +277,8 @@ def redirect(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, ra
         sys.stdout.write('\033[1;31m[-] No Open Redirect vulnerabilities found\033[0m\n')
         sys.stdout.flush()
     print()
+    
+    return urls_vulnerables
+
     
     return urls_vulnerables
