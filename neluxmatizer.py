@@ -29,7 +29,7 @@ banners = [
   +#+  +#+#+# +#+        +#+       +#+    +#+  +#+  +#+  +#+       +#+ +#+     +#+ +#+         +#+       +#+     +#+        +#+    +#+    
  #+#   #+#+# #+#        #+#       #+#    #+# #+#    #+# #+#       #+# #+#     #+# #+#         #+#      #+#      #+#        #+#    #+#     
 ###    #### ########## ########## ########  ###    ### ###       ### ###     ### ###     ########### ######### ########## ###    ###      
- Tool For Hackers by Nelux v1.3
+ Tool For Hackers by Nelux v1.4
 
 ''',
 
@@ -41,7 +41,7 @@ r'''
      \ \_\\"\_\  \ \_____\  \ \_____\  \ \_____\   /\_\/\_\  \ \_\ \ \_\  \ \_\ \_\    \ \_\  \ \_\   /\_____\  \ \_____\  \ \_\ \_\ 
       \/_/ \/_/   \/_____/   \/_____/   \/_____/   \/_/\/_/   \/_/  \/_/   \/_/\/_/     \/_/   \/_/   \/_____/   \/_____/   \/_/ /_/                                                                                                                                     
      
-     Pentester Tool v1.3 by Nelux
+     Pentester Tool v1.4 by Nelux
 ''',
 
 r'''
@@ -51,7 +51,7 @@ r'''
     ██║╚██╗██║██╔══╝  ██║     ██║   ██║ ██╔██╗ 
     ██║ ╚████║███████╗███████╗╚██████╔╝██╔╝ ██╗
     ╚═╝  ╚═══╝╚══════╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝ MATIZER
-    Turbo Pentest Tool v1.3
+    Turbo Pentest Tool v1.4
 ''',
 
 r'''
@@ -233,7 +233,7 @@ def selector():
     checkpoint_id = None
     param_endpoints = None
     if args.version:
-         sys.stdout.write('New version with IA 1.1\n')
+         sys.stdout.write('New version with IA 1.4\n')
          sys.stdout.flush()
          sys.stdout.write('Check the current version at https://github.com/Nelux1/Neluxmatizer.git\n')
          sys.stdout.flush()
