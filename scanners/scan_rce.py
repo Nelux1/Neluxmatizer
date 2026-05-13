@@ -1,5 +1,6 @@
 import requests
 import random
+import re
 from parametizer.bounded_pool import run_threadpool_pending_bounded
 from urllib.parse import urlparse, parse_qs, urljoin, quote
 from bs4 import BeautifulSoup
@@ -16,17 +17,43 @@ from vulnerability_manager import vuln_manager
 init()
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+_STATIC_EXTENSIONS = (
+    ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg",
+    ".woff", ".woff2", ".ico", ".ttf", ".eot", ".mp4", ".webm", ".pdf",
+)
+
+_TRACKING_PARAMS: frozenset = frozenset({
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "utm_id", "utm_reader", "utm_name", "utm_placing",
+    "fbclid", "gclid", "msclkid", "dclid", "twclid",
+    "_ga", "_gid", "_gl", "_hsenc", "_hsmi",
+    "mc_eid", "mc_cid",
+    "ref", "referrer",
+})
+
+_HASHED_PAGE_RE = re.compile(r'^[0-9a-f]{6,}_page$', re.IGNORECASE)
+
+
+def _is_static_path(url: str) -> bool:
+    path = urlparse(url).path.lower()
+    return path.endswith(_STATIC_EXTENSIONS)
+
+
+def _is_non_injectable_param(param: str) -> bool:
+    p = param.lower()
+    return p in _TRACKING_PARAMS or bool(_HASHED_PAGE_RE.match(p))
+
+
 rce_params = [
     "cmd", "exec", "execute", "run", "input", "query", "command",
-    "cli", "process", "action", "call", "shell", "code", "eval"
+    "cli", "process", "action", "call", "shell", "code", "eval",
+    "file", "path", "dir", "template", "filename", "load",
+    "source", "data", "script", "ping", "host", "domain",
+    "ip", "target", "url", "endpoint", "syscmd", "system",
 ]
 
 def is_rce_response(text):
     return any(keyword in text.lower() for keyword in ["uid=", "gid=", "root:", "/etc/passwd", "neluxmatizer"])
-
-def confirm_reflection(text, marker="NELUX123456"):
-    count = text.lower().count(marker.lower())
-    return count > 0 and count < 5  # reflejado una vez o pocas veces
 
 def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_agent):
     print('\033[1;36m<<<<<<<<<<<<\033[0m Testing Remote Code Execution \033[1;36m>>>>>>>>>>>>>>\033[0m')
@@ -75,17 +102,19 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
         base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
         qs = parse_qs(parsed.query)
 
-        if not qs or base_url in vulnerable_endpoints:
+        if not qs or base_url in vulnerable_endpoints or _is_static_path(url):
             with lock:
                 current += 1
                 update_progress(current, total_tasks)
             return
 
         for param in qs:
+            if _is_non_injectable_param(param):
+                continue
             if param.lower() not in rce_params:
                 continue
 
-            data = {k: payload if k == param else "NELUX123456" for k in qs}
+            data = {k: payload if k == param else "TEST123" for k in qs}
             headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
             
             # Cache de baseline para GET
@@ -102,7 +131,6 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
                     is_rce_response(r.text)
                     and r.text.lower() != baseline
                     and abs(len(r.text) - len(baseline)) > 50
-                    and confirm_reflection(r.text)
                 ):
                     with lock:
                         if base_url not in vulnerable_endpoints:
@@ -132,17 +160,19 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
         base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
         qs = parse_qs(parsed.query)
 
-        if base_url in vulnerable_endpoints or not qs:
+        if base_url in vulnerable_endpoints or not qs or _is_static_path(url):
             with lock:
                 current += 1
                 update_progress(current, total_tasks)
             return
 
         for param in qs:
+            if _is_non_injectable_param(param):
+                continue
             if param.lower() not in rce_params:
                 continue
 
-            data = {k: payload if k == param else "NELUX123456" for k in qs}
+            data = {k: payload if k == param else "TEST123" for k in qs}
             headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
             
             # Cache de baseline para POST
@@ -159,7 +189,6 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
                     is_rce_response(r.text)
                     and r.text.lower() != baseline
                     and abs(len(r.text) - len(baseline)) > 50
-                    and confirm_reflection(r.text)
                 ):
                     with lock:
                         if base_url not in vulnerable_endpoints:
@@ -227,7 +256,6 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
                     is_rce_response(res.text)
                     and res.text.lower() != baseline
                     and abs(len(res.text) - len(baseline)) > 50
-                    and confirm_reflection(res.text)
                 ):
                     with lock:
                         if full_url not in vulnerable_endpoints:
@@ -272,4 +300,6 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
         print('\033[1;31m[-] No RCE vulnerabilities found\033[0m')
     print()
     
+    return urls_vulnerables
+
     return urls_vulnerables
