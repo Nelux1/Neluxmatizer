@@ -1767,7 +1767,7 @@ class PoCGenerator:
     
     <div style="text-align: center; margin: 20px 0;">
         <button class="button" onclick="openInNewTab()" id="openBtn" disabled>🔗 Open in New Tab (XSS will execute)</button>
-        <button class="button" onclick="copyUrl()" id="copyBtn" disabled>📋 Copy URL</button>
+        <button class="button" onclick="copyUrl()" id="copyBtn" disabled>📋 Copy cURL</button>
         <button class="button" onclick="showAnalysis()">🔍 Show Analysis</button>
         <button class="button" onclick="showDetails()">📊 Show Details</button>
     </div>
@@ -1890,54 +1890,93 @@ class PoCGenerator:
             }}
         }}
         
+        // Escapa HTML para evitar que el payload se ejecute dentro del PoC
+        function escHtml(str) {{
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }}
+
+        // Construye el comando curl reproducible según el método y los campos reales
+        function buildCurl() {{
+            if (!selectedVuln) return '';
+            const url = selectedVuln.url;
+            if (selectedVuln.method === 'POST' && selectedVuln.form_data && Object.keys(selectedVuln.form_data).length > 0) {{
+                const parts = [];
+                for (const [name, encodedValue] of Object.entries(selectedVuln.form_data)) {{
+                    const val = atob(encodedValue);
+                    parts.push(encodeURIComponent(name) + '=' + encodeURIComponent(val));
+                }}
+                return "curl -sk -X POST '" + url + "' --data '" + parts.join('&') + "'";
+            }} else {{
+                return "curl -sk '" + url + "'";
+            }}
+        }}
+
         function openInNewTab() {{
             if (!selectedVuln) return;
-            
-            // Mostrar información antes de abrir
+
             const resultDiv = document.getElementById('result');
             const decodedPayload = atob(selectedVuln.payload);
-            resultDiv.innerHTML = `🚀 <strong>Opening vulnerable URL in new tab...</strong><br><br><strong>URL:</strong> ${{selectedVuln.url}}<br><strong>Method:</strong> ${{selectedVuln.method}}<br><strong>Payload:</strong> <code>${{decodedPayload}}</code><br><br>⚠️ <strong>Warning:</strong> This will open the actual vulnerable URL with the XSS payload!`;
+
+            // Mostrar info usando escHtml para que el payload no ejecute en el PoC
+            resultDiv.innerHTML =
+                '🚀 <strong>Opening vulnerable URL in new tab...</strong><br><br>' +
+                '<strong>URL:</strong> ' + escHtml(selectedVuln.url) + '<br>' +
+                '<strong>Method:</strong> ' + escHtml(selectedVuln.method) + '<br>' +
+                '<strong>Payload:</strong> <code>' + escHtml(decodedPayload) + '</code><br><br>' +
+                '⚠️ <strong>Warning:</strong> This will open the actual vulnerable URL with the XSS payload!';
             resultDiv.style.borderColor = '#e74c3c';
-            
-            // Si es POST, crear un formulario y enviarlo
+
             if (selectedVuln.method === 'POST') {{
-                // Crear un formulario temporal para enviar POST
                 const form = document.createElement('form');
                 form.method = 'POST';
                 form.action = selectedVuln.url;
                 form.target = '_blank';
                 form.style.display = 'none';
-                
-                // Agregar el payload como campo del formulario
-                const input = document.createElement('input');
-                input.type = 'hidden';
-                input.name = 'searchFor';
-                input.value = atob(selectedVuln.payload);
-                form.appendChild(input);
-                
-                // Agregar el formulario al DOM y enviarlo
+
+                // Usar los campos reales de form_data en lugar de un nombre hardcodeado
+                if (selectedVuln.form_data && Object.keys(selectedVuln.form_data).length > 0) {{
+                    for (const [name, encodedValue] of Object.entries(selectedVuln.form_data)) {{
+                        const input = document.createElement('input');
+                        input.type = 'hidden';
+                        input.name = name;
+                        input.value = atob(encodedValue);
+                        form.appendChild(input);
+                    }}
+                }} else {{
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = 'payload';
+                    input.value = decodedPayload;
+                    form.appendChild(input);
+                }}
+
                 document.body.appendChild(form);
                 form.submit();
                 document.body.removeChild(form);
             }} else {{
-                // Para GET, construir la URL con el payload
-                let realUrl = selectedVuln.url;
-                const separator = realUrl.includes('?') ? '&' : '?';
-                realUrl = realUrl + separator + 'test=' + encodeURIComponent(atob(selectedVuln.payload));
-                window.open(realUrl, '_blank');
+                // Para GET la URL ya contiene el payload en sus parámetros
+                window.open(selectedVuln.url, '_blank');
             }}
         }}
-        
+
         function copyUrl() {{
             if (!selectedVuln) return;
-            
-            // Usar la URL real sin sanitizar para que el XSS funcione
-            const realUrl = selectedVuln.url; // Ya no está sanitizada
-            
-            navigator.clipboard.writeText(realUrl).then(function() {{
+
+            const curlCmd = buildCurl();
+            const decodedPayload = atob(selectedVuln.payload);
+
+            navigator.clipboard.writeText(curlCmd).then(function() {{
                 const resultDiv = document.getElementById('result');
-                const decodedPayload = atob(selectedVuln.payload);
-            resultDiv.innerHTML = `📋 <strong>URL copied to clipboard!</strong><br><br><strong>URL:</strong> ${{realUrl}}<br><strong>Method:</strong> ${{selectedVuln.method}}<br><strong>Payload:</strong> <code>${{decodedPayload}}</code>`;
+                resultDiv.innerHTML =
+                    '📋 <strong>cURL copied to clipboard!</strong><br><br>' +
+                    '<strong>Command:</strong><br>' +
+                    '<code style="word-break:break-all;">' + escHtml(curlCmd) + '</code><br><br>' +
+                    '<strong>Payload:</strong> <code>' + escHtml(decodedPayload) + '</code>';
                 resultDiv.style.borderColor = '#27ae60';
             }}).catch(function(err) {{
                 console.error('Could not copy text: ', err);
@@ -4202,6 +4241,7 @@ class PoCGenerator:
 
     def generate_xxe_poc(self, vulnerable_urls, screenshot=False, domain=None):
         """Genera PoC para XXE con múltiples URLs vulnerables"""
+        import json as _json
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         # Usar el dominio proporcionado o extraer de la primera URL
@@ -4284,7 +4324,7 @@ class PoCGenerator:
     </div>
 
     <script>
-        const vulnerabilities = {json.dumps(vuln_data)};
+        const vulnerabilities = {_json.dumps(vuln_data)};
         
         function showVulnerability() {{
             const select = document.getElementById('vulnSelect');

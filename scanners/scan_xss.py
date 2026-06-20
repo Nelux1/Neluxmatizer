@@ -74,6 +74,23 @@ def _is_non_injectable_param(param: str) -> bool:
     return p in _TRACKING_PARAMS or bool(_HASHED_PAGE_RE.match(p))
 
 
+def _strip_tracking_params(url: str) -> str:
+    """
+    Devuelve la URL sin parámetros de tracking (UTM, fbclid, etc.).
+    Usada para normalizar URLs de formularios antes del dedup,
+    evitando que la misma form en 50 variantes UTM genere 50 findings.
+    """
+    try:
+        from urllib.parse import urlunparse
+        p = urlparse(url)
+        clean_qs = {k: v for k, v in parse_qs(p.query, keep_blank_values=True).items()
+                    if k.lower() not in _TRACKING_PARAMS}
+        from urllib.parse import urlencode
+        return urlunparse(p._replace(query=urlencode(clean_qs, doseq=True)))
+    except Exception:
+        return url
+
+
 def _dom_xss_sort_key(url: str) -> int:
     """Retorna 0 si la URL tiene al menos un param prioritario (va primero), 1 si no."""
     try:
@@ -468,9 +485,13 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
                     continue
 
                 full_url = urljoin(url, action) if action else url
-                
+
+                # URL normalizada para dedup: sin tracking params
+                # Evita reportar N veces la misma form en páginas con diferentes UTM params
+                norm_url = _strip_tracking_params(full_url)
+
                 # Cache de baseline para formularios
-                baseline_key = f"{method}-{full_url}-{','.join(data.keys())}"
+                baseline_key = f"{method}-{norm_url}-{','.join(data.keys())}"
                 if baseline_key not in baseline_cache:
                     try:
                         baseline_data = {k: "TEST123" for k in data}
@@ -478,7 +499,7 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
                             r = session.post(full_url, data=baseline_data, timeout=5)
                         else:
                             r = session.get(full_url, params=baseline_data, timeout=5)
-                        
+
                         if r.status_code == 200:
                             baseline_cache[baseline_key] = r.text
                         else:
@@ -489,7 +510,7 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
                         baseline_cache[baseline_key] = ""
                     except Exception:
                         baseline_cache[baseline_key] = ""
-                
+
                 baseline = baseline_cache[baseline_key]
                 if not baseline:
                     continue
@@ -501,17 +522,17 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
 
                 # Solo procesar si la respuesta es exitosa
                 if res.status_code == 200 and is_xss_response(res.text, payload) and res.text != baseline:
-                    key = f"{full_url}|{','.join(sorted(data.keys()))}|{payload}"
+                    # Clave de dedup usando URL normalizada (sin UTM) y campos del form
+                    key = f"{norm_url}|{','.join(sorted(data.keys()))}|{payload}"
                     if key not in vuln_set:
                         vuln_set.add(key)
-                        
-                        # Salida sincronizada usando la nueva función
+
                         with stdout_lock:
                             encoded_data = {k: urllib.parse.quote_plus(v) for k, v in data.items()}
-                            print_vulnerability(f"\033[1;32m[FORM] [VULNERABLE]\033[0m {full_url}" + "\033[1;32m ==> \033[0m" + f"{encoded_data}" )
-                        
-                        # Guardar URL con datos del formulario para el PoC
-                        urls_vulnerables.append(f"{full_url} => {data}")
+                            print_vulnerability(f"\033[1;32m[FORM] [VULNERABLE]\033[0m {norm_url}" + "\033[1;32m ==> \033[0m" + f"{encoded_data}")
+
+                        # Reportar con URL normalizada (sin UTM) para el PoC
+                        urls_vulnerables.append(f"{norm_url} => {data}")
                         found += 1
         except requests.exceptions.Timeout:
             pass  # Skip timeouts silently

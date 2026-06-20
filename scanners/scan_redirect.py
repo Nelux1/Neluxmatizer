@@ -46,8 +46,10 @@ def _is_non_injectable_param(param: str) -> bool:
     return p in _TRACKING_PARAMS or bool(_HASHED_PAGE_RE.match(p))
 
 def get_base_domain(netloc):
-    parts = netloc.lower().split('.')
-    return '.'.join(parts[-2:]) if len(parts) >= 2 else netloc.lower()
+    # Eliminar el puerto antes de comparar (ej: securitas.com:443 → securitas.com)
+    host = netloc.lower().split(':')[0]
+    parts = host.split('.')
+    return '.'.join(parts[-2:]) if len(parts) >= 2 else host
 
 def is_redirect_vulnerable(location, base_url, injected_value):
     if not location:

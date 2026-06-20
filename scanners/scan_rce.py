@@ -111,12 +111,10 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
         for param in qs:
             if _is_non_injectable_param(param):
                 continue
-            if param.lower() not in rce_params:
-                continue
 
             data = {k: payload if k == param else "TEST123" for k in qs}
             headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
-            
+
             # Cache de baseline para GET
             baseline_key = f"GET-{base_url}-{','.join(data.keys())}"
             if baseline_key not in baseline_cache:
@@ -169,12 +167,10 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
         for param in qs:
             if _is_non_injectable_param(param):
                 continue
-            if param.lower() not in rce_params:
-                continue
 
             data = {k: payload if k == param else "TEST123" for k in qs}
             headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
-            
+
             # Cache de baseline para POST
             baseline_key = f"POST-{base_url}-{','.join(data.keys())}"
             if baseline_key not in baseline_cache:
@@ -231,7 +227,7 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
                 data = {}
                 for i in inputs:
                     name = i.get("name")
-                    if name and name.lower() in rce_params:
+                    if name and not _is_non_injectable_param(name):
                         data[name] = payload
 
                 if not data:
