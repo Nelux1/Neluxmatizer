@@ -118,6 +118,14 @@ def clickjacking(urip, urif, urls_vulnerables, threads, custom_headers, random_a
             else:
                 response = response_cache[url]
 
+            # Ignorar redirects (30x): la respuesta de redirect no tiene headers
+            # de framing propios — lo que importa es la página final (HTTPS canonical).
+            if response.status_code in (301, 302, 303, 307, 308):
+                with lock:
+                    progress += 1
+                    update_progress(progress, total_tasks)
+                return
+
             # Ignorar respuestas que no son HTML (API JSON, XML, scripts, etc.)
             content_type = response.headers.get('Content-Type', '').lower()
             if 'text/html' not in content_type and 'application/xhtml' not in content_type:

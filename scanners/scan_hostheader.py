@@ -71,6 +71,10 @@ def hostheader_injection(
             seen_bases.add(base)
             candidate_urls.append(base)
 
+    # Dominios ya encontrados vulnerables — una vez confirmado el dominio,
+    # no se reportan más URLs del mismo host (evita miles de findings iguales).
+    vulnerable_domains: set = set()
+
     total = len(candidate_urls)
     current = 0
     found = 0
@@ -80,6 +84,13 @@ def hostheader_injection(
 
     def test_url(url: str):
         nonlocal current, found
+
+        url_host = urlparse(url).netloc
+        with lock:
+            if url_host in vulnerable_domains:
+                current += 1
+                update_progress(current, total)
+                return
 
         if vuln_manager.should_skip_url(url, base_url_only=True):
             with lock:
@@ -129,6 +140,10 @@ def hostheader_injection(
                     vuln_manager.mark_as_exploited(url, hdr)
                     vuln_manager.mark_as_exploited(url, base_url_only=True)
                     where = "Location" if reflected_in_location else "body"
+                    with lock:
+                        if url_host in vulnerable_domains:
+                            break  # Ya reportado para este dominio
+                        vulnerable_domains.add(url_host)
                     with stdout_lock:
                         print_vulnerability(
                             f"\033[1;32m[HHI] [VULNERABLE]\033[0m {url} "

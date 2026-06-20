@@ -53,7 +53,33 @@ rce_params = [
 ]
 
 def is_rce_response(text):
-    return any(keyword in text.lower() for keyword in ["uid=", "gid=", "root:", "/etc/passwd", "neluxmatizer"])
+    # Solo matchear output REAL de comandos, nunca el payload reflejado como texto.
+    # Patrones como "/etc/passwd", "neluxmatizer" se excluyen porque un CMS
+    # que refleja el valor del parámetro en la página los trigerea en falso.
+    rce_output_patterns = [
+        # /etc/passwd lines (contenido real del archivo)
+        "root:x:0:0:",
+        "daemon:x:1:1:",
+        "bin:x:2:2:",
+        "nobody:x:",
+        # id command output
+        "uid=0(root)",
+        "uid=0(root) gid=0(",
+        "uid=33(www-data)",
+        "uid=1000(",
+        "gid=0(root)",
+        # uname / sistema
+        "linux version ",
+        # ifconfig / ipconfig output
+        "windows ip configuration",
+        "ethernet adapter",
+        "inet 127.0.0.1",
+        "inet addr:127.",
+        # marcador numérico único usado en payloads echo
+        "3141592653589793",
+    ]
+    lower = text.lower()
+    return any(pat.lower() in lower for pat in rce_output_patterns)
 
 def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_agent):
     print('\033[1;36m<<<<<<<<<<<<\033[0m Testing Remote Code Execution \033[1;36m>>>>>>>>>>>>>>\033[0m')
