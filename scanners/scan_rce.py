@@ -298,17 +298,26 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
                 has_real_output = is_rce_response(res.text)
                 has_echo_marker = _RCE_ECHO_MARKER in res.text
                 if has_echo_marker and not has_real_output:
-                    # Para forms, si TODOS los campos reflejan el valor, es reflection genérica
-                    # Testeamos con el primer campo injectable que tenga el payload
-                    injectable_params = list(data.keys())
-                    if injectable_params:
-                        first_param = injectable_params[0]
-                        reflect_key = f"REFLECT-FORM-{method}-{full_url}-{first_param}"
-                        if reflect_key not in baseline_cache:
-                            baseline_cache[reflect_key] = _param_reflects_marker(
-                                method, full_url, data, first_param, headers)
-                        if baseline_cache[reflect_key]:
-                            has_echo_marker = False
+                    # Reflection check para forms: enviar el marcador en TODOS los campos
+                    # simultáneamente (igual que el payload real). Si el marcador aparece
+                    # así, es simple reflection del form (ej: el campo "name" refleja su value).
+                    # Testar solo el primer campo individualmente genera FPs porque otro campo
+                    # puede ser el que refleja.
+                    reflect_key = f"REFLECT-FORM-{method}-{full_url}"
+                    if reflect_key not in baseline_cache:
+                        plain_all = {k: _RCE_ECHO_MARKER for k in data}
+                        try:
+                            if method == "post":
+                                r_plain = requests.post(full_url, data=plain_all, headers=headers,
+                                                        verify=False, timeout=5)
+                            else:
+                                r_plain = requests.get(full_url, params=plain_all, headers=headers,
+                                                       verify=False, timeout=5)
+                            baseline_cache[reflect_key] = _RCE_ECHO_MARKER in r_plain.text
+                        except Exception:
+                            baseline_cache[reflect_key] = True  # conservador: asumir refleja
+                    if baseline_cache[reflect_key]:
+                        has_echo_marker = False
 
                 if res.status_code == 200 and (
                     (has_real_output or has_echo_marker)
