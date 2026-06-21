@@ -3262,8 +3262,6 @@ class PoCGenerator:
         with open(html_path, 'w', encoding='utf-8') as f:
             f.write(html_content)
         
-        sys.stdout.write(f"✅ RCE PoC generado: {html_filename}\n")
-        sys.stdout.flush()
         return {
             'html_path': html_path,
             'screenshot_path': None,

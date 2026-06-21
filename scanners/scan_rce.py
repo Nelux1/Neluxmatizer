@@ -52,34 +52,36 @@ rce_params = [
     "ip", "target", "url", "endpoint", "syscmd", "system",
 ]
 
+_RCE_ECHO_MARKER = "3141592653589793"
+
 def is_rce_response(text):
-    # Solo matchear output REAL de comandos, nunca el payload reflejado como texto.
-    # Patrones como "/etc/passwd", "neluxmatizer" se excluyen porque un CMS
-    # que refleja el valor del parámetro en la página los trigerea en falso.
+    """Detecta output REAL de comandos del sistema.
+    El marcador echo (_RCE_ECHO_MARKER) se evalúa por separado con reflection-check
+    para evitar FPs en CMSs que reflejan el valor del parámetro tal cual."""
     rce_output_patterns = [
-        # /etc/passwd lines (contenido real del archivo)
-        "root:x:0:0:",
-        "daemon:x:1:1:",
-        "bin:x:2:2:",
-        "nobody:x:",
-        # id command output
-        "uid=0(root)",
-        "uid=0(root) gid=0(",
-        "uid=33(www-data)",
-        "uid=1000(",
-        "gid=0(root)",
-        # uname / sistema
+        "root:x:0:0:", "daemon:x:1:1:", "bin:x:2:2:", "nobody:x:",
+        "uid=0(root)", "uid=0(root) gid=0(", "uid=33(www-data)", "uid=1000(", "gid=0(root)",
         "linux version ",
-        # ifconfig / ipconfig output
-        "windows ip configuration",
-        "ethernet adapter",
-        "inet 127.0.0.1",
-        "inet addr:127.",
-        # marcador numérico único usado en payloads echo
-        "3141592653589793",
+        "windows ip configuration", "ethernet adapter",
+        "inet 127.0.0.1", "inet addr:127.",
     ]
     lower = text.lower()
     return any(pat.lower() in lower for pat in rce_output_patterns)
+
+
+def _param_reflects_marker(method: str, url: str, all_params: dict, target_param: str,
+                             headers: dict) -> bool:
+    """Devuelve True si el parámetro refleja el marcador como valor plano
+    (sin operadores de inyección). Usado para descartar FPs de echo-based detection."""
+    plain_data = {k: _RCE_ECHO_MARKER if k == target_param else "TEST123" for k in all_params}
+    try:
+        if method == "get":
+            r = requests.get(url, params=plain_data, headers=headers, verify=False, timeout=5)
+        else:
+            r = requests.post(url, data=plain_data, headers=headers, verify=False, timeout=5)
+        return _RCE_ECHO_MARKER in r.text
+    except Exception:
+        return True  # En caso de error, asumir que refleja (conservador: no reportar)
 
 def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_agent):
     print('\033[1;36m<<<<<<<<<<<<\033[0m Testing Remote Code Execution \033[1;36m>>>>>>>>>>>>>>\033[0m')
@@ -150,9 +152,20 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
             try:
                 r = requests.get(base_url, params=data, headers=headers, verify=False, timeout=5)
                 
-                # Solo procesar si la respuesta es exitosa
+                # Determinar si hay evidencia de RCE real
+                has_real_output = is_rce_response(r.text)
+                # Echo marker: solo válido si el parámetro NO refleja el marcador como valor plano
+                has_echo_marker = _RCE_ECHO_MARKER in r.text
+                if has_echo_marker and not has_real_output:
+                    reflect_key = f"REFLECT-GET-{base_url}-{param}"
+                    if reflect_key not in baseline_cache:
+                        baseline_cache[reflect_key] = _param_reflects_marker(
+                            "get", base_url, qs, param, headers)
+                    if baseline_cache[reflect_key]:
+                        has_echo_marker = False  # El CMS refleja cualquier valor → no es RCE
+
                 if r.status_code == 200 and (
-                    is_rce_response(r.text)
+                    (has_real_output or has_echo_marker)
                     and r.text.lower() != baseline
                     and abs(len(r.text) - len(baseline)) > 50
                 ):
@@ -206,9 +219,18 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
             try:
                 r = requests.post(base_url, data=data, headers=headers, verify=False, timeout=5)
                 
-                # Solo procesar si la respuesta es exitosa
+                has_real_output = is_rce_response(r.text)
+                has_echo_marker = _RCE_ECHO_MARKER in r.text
+                if has_echo_marker and not has_real_output:
+                    reflect_key = f"REFLECT-POST-{base_url}-{param}"
+                    if reflect_key not in baseline_cache:
+                        baseline_cache[reflect_key] = _param_reflects_marker(
+                            "post", base_url, qs, param, headers)
+                    if baseline_cache[reflect_key]:
+                        has_echo_marker = False
+
                 if r.status_code == 200 and (
-                    is_rce_response(r.text)
+                    (has_real_output or has_echo_marker)
                     and r.text.lower() != baseline
                     and abs(len(r.text) - len(baseline)) > 50
                 ):
@@ -273,9 +295,23 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
                 else:
                     res = requests.get(full_url, params=data, headers=headers, timeout=5)
 
-                # Solo procesar si la respuesta es exitosa
+                has_real_output = is_rce_response(res.text)
+                has_echo_marker = _RCE_ECHO_MARKER in res.text
+                if has_echo_marker and not has_real_output:
+                    # Para forms, si TODOS los campos reflejan el valor, es reflection genérica
+                    # Testeamos con el primer campo injectable que tenga el payload
+                    injectable_params = list(data.keys())
+                    if injectable_params:
+                        first_param = injectable_params[0]
+                        reflect_key = f"REFLECT-FORM-{method}-{full_url}-{first_param}"
+                        if reflect_key not in baseline_cache:
+                            baseline_cache[reflect_key] = _param_reflects_marker(
+                                method, full_url, data, first_param, headers)
+                        if baseline_cache[reflect_key]:
+                            has_echo_marker = False
+
                 if res.status_code == 200 and (
-                    is_rce_response(res.text)
+                    (has_real_output or has_echo_marker)
                     and res.text.lower() != baseline
                     and abs(len(res.text) - len(baseline)) > 50
                 ):

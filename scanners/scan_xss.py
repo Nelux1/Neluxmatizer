@@ -79,12 +79,31 @@ def _strip_tracking_params(url: str) -> str:
     Devuelve la URL sin parámetros de tracking (UTM, fbclid, etc.).
     Usada para normalizar URLs de formularios antes del dedup,
     evitando que la misma form en 50 variantes UTM genere 50 findings.
+
+    Normaliza también las variantes con amp%3B y amp%3Bamp%3B encodings
+    (doble-codificación de '&' en Query Strings mal generados por CMS),
+    que producen params como 'amp;utm_medium' o 'amp;amp;utm_medium'.
     """
     try:
-        from urllib.parse import urlunparse
+        from urllib.parse import urlunparse, unquote
         p = urlparse(url)
-        clean_qs = {k: v for k, v in parse_qs(p.query, keep_blank_values=True).items()
-                    if k.lower() not in _TRACKING_PARAMS}
+
+        # Decodificar primero el query string para normalizar `amp%3B` → `amp;`
+        # y luego re-parsear. Esto unifica ?utm_x=a y ?amp%3Butm_x=a y ?amp%3Bamp%3Butm_x=a
+        decoded_qs = unquote(p.query)
+
+        def _strip_amp_prefix(k: str) -> str:
+            """Quita prefijos 'amp;' repetidos del nombre del parámetro."""
+            while k.lower().startswith("amp;"):
+                k = k[4:]
+            return k
+
+        raw_pairs = parse_qs(decoded_qs, keep_blank_values=True)
+        clean_qs = {
+            _strip_amp_prefix(k): v
+            for k, v in raw_pairs.items()
+            if _strip_amp_prefix(k).lower() not in _TRACKING_PARAMS
+        }
         from urllib.parse import urlencode
         return urlunparse(p._replace(query=urlencode(clean_qs, doseq=True)))
     except Exception:
@@ -268,9 +287,6 @@ def is_xss_response(text, payload):
         "innerHTML"
     ]
     
-    # Solo considerar válido si hay múltiples indicadores o el payload se refleja claramente
-    indicator_count = sum(1 for indicator in xss_indicators if indicator in text.lower())
-    
     # Evitar páginas de error HTTP claras (sin contenido de la app)
     if "404 not found" in text.lower() or "403 forbidden" in text.lower() or "500 internal server error" in text.lower():
         return False
@@ -280,10 +296,13 @@ def is_xss_response(text, payload):
         return False
     
     # Verificar que la respuesta tenga contenido significativo
-    if len(text.strip()) < 50:  # Respuestas muy cortas probablemente son errores
+    if len(text.strip()) < 50:
         return False
     
-    return indicator_count >= 2 or payload in text  # Al menos 2 indicadores o payload reflejado
+    # Solo reportar si el payload está literalmente reflejado en el HTML sin escapar.
+    # "indicator_count >= 2" fue eliminado: los CMS modernos siempre tienen onclick/eval/etc.
+    # en su JS, lo que causaba falsos positivos en cualquier página con JS.
+    return payload in text
 
 def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, random_agent=False):
     print('\033[1;36m<<<<<<<<<<<<\033[0m Testing Cross-Site Scripting \033[1;36m>>>>>>>>>>>>>\033[0m')
