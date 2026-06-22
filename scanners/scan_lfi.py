@@ -96,7 +96,7 @@ _LFI_BYPASS_PAYLOADS: list = [
     "../../../../etc/passwd%00.jpg",
     # Rutas alternativas Linux
     "....//....//....//etc/passwd",
-    "..\/..\/..\/etc/passwd",
+    r"..\/..\/..\/etc/passwd",
     "/proc/self/environ",
     "/proc/version",
     "/var/log/apache2/access.log",
