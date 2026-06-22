@@ -478,11 +478,14 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
         if param_endpoints:
             uri = list(dict.fromkeys(param_endpoints))
             urip = []
+            urif = []   # Endpoints sin query params (para JSON body testing)
             for ep in uri:
                 if "?" in ep.split("#", 1)[0]:
                     urip.append(ep)
+                else:
+                    urif.append(ep)
             urip = list(dict.fromkeys(urip))
-            urif = []
+            urif = list(dict.fromkeys(urif))
             sys.stdout.write(
                 fmt_line("1;36", "[+] Total URLs from list:", str(len(uri))) + "\n"
             )

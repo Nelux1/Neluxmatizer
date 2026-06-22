@@ -111,10 +111,57 @@ def _strip_tracking_params(url: str) -> str:
         return url
 
 
+# Campos JSON comunes para probar en endpoints sin query params
+_JSON_COMMON_FIELDS: list = [
+    "email", "username", "user", "login", "password",
+    "q", "query", "search", "keyword", "term",
+    "id", "name", "value", "param", "input", "data",
+    "comment", "message", "text", "content", "body",
+]
+
+# Cache para detección de endpoints que aceptan JSON
+_json_accept_cache: dict = {}
+_json_accept_lock = threading.Lock()
+
+
+def _probe_accepts_json(base_url: str, headers: dict) -> bool:
+    """Detecta si el endpoint acepta Content-Type: application/json (respuesta != 415)."""
+    with _json_accept_lock:
+        if base_url in _json_accept_cache:
+            return _json_accept_cache[base_url]
+    try:
+        h = dict(headers)
+        h["Content-Type"] = "application/json"
+        r = requests.post(base_url, json={}, headers=h, verify=False, timeout=4)
+        accepts = r.status_code != 415
+    except Exception:
+        accepts = False
+    with _json_accept_lock:
+        _json_accept_cache[base_url] = accepts
+    return accepts
+
+
+def _has_fragment_params(url: str) -> bool:
+    """Retorna True si la URL tiene query params dentro del fragmento (e.g. /#/search?q=val)."""
+    frag = urlparse(url).fragment
+    return "?" in frag
+
+
+def _get_fragment_qs(url: str) -> dict:
+    """Extrae los query params del fragmento de la URL. Retorna dict vacío si no hay."""
+    frag = urlparse(url).fragment
+    if "?" not in frag:
+        return {}
+    try:
+        return parse_qs(frag.split("?", 1)[1])
+    except Exception:
+        return {}
+
+
 def _dom_xss_sort_key(url: str) -> int:
     """Retorna 0 si la URL tiene al menos un param prioritario (va primero), 1 si no."""
     try:
-        qs = parse_qs(urlparse(url).query)
+        qs = parse_qs(urlparse(url).query) or _get_fragment_qs(url)
         if any(p.lower() in _DOM_XSS_PRIORITY_PARAMS for p in qs):
             return 0
     except Exception:
@@ -156,10 +203,11 @@ def _dom_xss_batch(
         except ImportError:
             return []
 
-        # Filtrar y ordenar: primero URLs candidatas con params prioritarios
+        # Filtrar y ordenar: incluir URLs con params en query string O en fragment (#/path?param=)
         candidates = [
             u for u in urls
-            if parse_qs(urlparse(u).query) and not _is_static_path(u)
+            if (parse_qs(urlparse(u).query) or _has_fragment_params(u))
+            and not _is_static_path(u)
             and f"{urlparse(u).scheme}://{urlparse(u).netloc}{urlparse(u).path}" not in already_found
         ]
         candidates.sort(key=_dom_xss_sort_key)
@@ -217,6 +265,7 @@ def _dom_xss_batch(
                             with progress_lock:
                                 done_counter[0] += 1
                                 cnt = done_counter[0]
+
                             sys.stdout.write(
                                 f"\r\033[K  [DOM XSS] {cnt}/{total_cand} (×{n_workers}w) | {url[:70]}"
                             )
@@ -224,7 +273,18 @@ def _dom_xss_batch(
 
                             parsed = urlparse(url)
                             base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-                            qs = parse_qs(parsed.query)
+
+                            # Soporte para fragment URLs: /#/path?param=value (SPAs Angular/React)
+                            frag = parsed.fragment
+                            is_fragment_url = "?" in frag
+                            if is_fragment_url:
+                                frag_path, frag_qs_str = frag.split("?", 1)
+                                qs = parse_qs(frag_qs_str)
+                            else:
+                                qs = parse_qs(parsed.query)
+
+                            if not qs:
+                                continue
 
                             vuln_found_for_url = False
                             for param in qs:
@@ -238,7 +298,13 @@ def _dom_xss_batch(
 
                                     data = {p: "TEST123" for p in qs}
                                     data[param] = payload
-                                    test_url_str = base_url + "?" + urllib.parse.urlencode(data, doseq=True)
+
+                                    if is_fragment_url:
+                                        # Reconstruir URL con payload en el fragment
+                                        new_frag_qs = urllib.parse.urlencode(data, doseq=True)
+                                        test_url_str = f"{base_url}#{frag_path}?{new_frag_qs}"
+                                    else:
+                                        test_url_str = base_url + "?" + urllib.parse.urlencode(data, doseq=True)
 
                                     try:
                                         page.goto(
@@ -478,7 +544,7 @@ def _xss_bypass_payloads_for(context: str, headers) -> list:
 def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, random_agent=False):
     print('\033[1;36m<<<<<<<<<<<<\033[0m Testing Cross-Site Scripting \033[1;36m>>>>>>>>>>>>>\033[0m')
     print()
-    total = (len(urip)*2 + len(urif)) * len(wordlist)
+    total = (len(urip) * 3 + len(urif) * 2) * len(wordlist)  # GET+POST+JSON (urip) + FORM+JSON (urif)
     current = 0
     found = 0
     lock = threading.Lock()
@@ -886,13 +952,150 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
             current += 1
             update_progress(current, total)
 
+    def test_json_xss(url, payload):
+        """Prueba XSS vía JSON body. Soporta endpoints con y sin query params."""
+        nonlocal current, found
+        parsed = urlparse(url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        qs = parse_qs(parsed.query)
+
+        if _is_static_path(url):
+            with lock:
+                current += 1
+                update_progress(current, total)
+            return
+
+        if vuln_manager.should_skip_url(base_url, base_url_only=True):
+            with lock:
+                current += 1
+                update_progress(current, total)
+            return
+
+        headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
+        domain = parsed.netloc
+
+        if not _probe_accepts_json(base_url, headers):
+            with lock:
+                current += 1
+                update_progress(current, total)
+            return
+
+        if ban.is_banned(domain):
+            with lock:
+                current += 1
+                update_progress(current, total)
+            return
+
+        json_headers = dict(headers)
+        json_headers["Content-Type"] = "application/json"
+
+        fields_to_test = list(qs.keys()) if qs else _JSON_COMMON_FIELDS
+
+        for param in fields_to_test:
+            if _is_non_injectable_param(param):
+                continue
+
+            baseline_key = f"JSON-{base_url}-{param}"
+            if baseline_key not in baseline_cache:
+                try:
+                    data = {p: "TEST123" for p in qs}
+                    rb = requests.post(base_url, json=data, headers=json_headers,
+                                       verify=False, timeout=5)
+                    baseline_cache[baseline_key] = rb.text if rb.status_code == 200 else ""
+                except Exception:
+                    baseline_cache[baseline_key] = ""
+            baseline = baseline_cache[baseline_key]
+
+            if not baseline:
+                continue
+
+            data = {p: "TEST123" for p in qs}
+            data[param] = payload
+
+            try:
+                r = requests.post(base_url, json=data, headers=json_headers,
+                                  verify=False, timeout=5, allow_redirects=True)
+                ban.record(domain, r.status_code, r, base_url)
+
+                def _report_json_xss(win_payload, label="JSON-POST"):
+                    if not vuln_manager.is_already_exploited(base_url, param):
+                        if not vuln_manager.verify_false_positive(
+                            base_url, win_payload, label, custom_headers, random_agent
+                        ):
+                            vuln_manager.mark_as_exploited(base_url, param)
+                            vuln_manager.mark_as_exploited(base_url, base_url_only=True)
+                            with stdout_lock:
+                                print_vulnerability(
+                                    f"\033[1;32m[{label}] [VULNERABLE]\033[0m "
+                                    f"{base_url} \033[2m(field: {param})\033[0m"
+                                )
+                            entry = f"{base_url}?{param}={quote(win_payload)}|||JSON_BODY:true"
+                            if label not in ("JSON-POST",):
+                                entry += f"|||BYPASS_TECHNIQUE:{label}"
+                            urls_vulnerables.append(entry)
+                            return True
+                    return False
+
+                # CAPA 1: detección directa
+                if r.status_code == 200 and is_xss_response(r.text, payload) and r.text != baseline:
+                    if payload in r.text or urllib.parse.unquote(payload) in r.text:
+                        if _report_json_xss(payload):
+                            found += 1
+                            break
+
+                # CAPA 2: bypass contextual (marker reflejado pero payload modificado)
+                elif r.status_code == 200 and _XSS_MARKER in r.text and r.text != baseline:
+                    context = _detect_xss_context(r.text)
+                    for bp in _xss_bypass_payloads_for(context, r.headers):
+                        bp_data = {p: "TEST123" for p in qs}
+                        bp_data[param] = bp
+                        try:
+                            rb2 = requests.post(base_url, json=bp_data, headers=json_headers,
+                                                verify=False, timeout=5)
+                            if rb2.status_code == 200 and is_xss_response(rb2.text, bp, context):
+                                if _report_json_xss(bp, f"JSON-BYPASS[{context}]"):
+                                    found += 1
+                                    break
+                        except Exception:
+                            continue
+
+                # CAPA 3: WAF bypass
+                elif r.status_code in (403, 406, 429):
+                    waf = _detect_waf(r)
+                    if waf:
+                        for wp in _XSS_WAF_BYPASS_PAYLOADS[:3]:
+                            wp_data = {p: "TEST123" for p in qs}
+                            wp_data[param] = wp
+                            try:
+                                rw = requests.post(base_url, json=wp_data, headers=json_headers,
+                                                   verify=False, timeout=5)
+                                if rw.status_code == 200 and is_xss_response(rw.text, wp):
+                                    if _report_json_xss(wp, f"JSON-WAF-BYPASS[{waf}]"):
+                                        found += 1
+                                        break
+                            except Exception:
+                                continue
+
+            except requests.exceptions.Timeout:
+                continue
+            except requests.exceptions.RequestException:
+                continue
+            except Exception:
+                continue
+
+        with lock:
+            current += 1
+            update_progress(current, total)
+
     def _iter_xss_tasks():
         for url in urip:
             for payload in wordlist:
                 yield (test_url, url, payload)
+                yield (test_json_xss, url, payload)
         for url in urif:
             for payload in wordlist:
                 yield (test_form, url, payload)
+                yield (test_json_xss, url, payload)
 
     try:
         run_threadpool_pending_bounded(_iter_xss_tasks(), threads)

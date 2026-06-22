@@ -10,12 +10,39 @@ import urllib3
 import threading
 import sys
 import os
-import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from vulnerability_manager import vuln_manager
 
 init()
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Campos JSON comunes para probar en endpoints sin query params
+_JSON_COMMON_FIELDS: list = [
+    "comment", "message", "text", "content", "body", "input",
+    "q", "query", "search", "name", "value", "data",
+    "email", "username", "user", "param", "template",
+]
+
+# Cache para detección de endpoints que aceptan JSON
+_json_accept_cache: dict = {}
+_json_accept_lock = threading.Lock()
+
+
+def _probe_accepts_json(base_url: str, headers: dict) -> bool:
+    """Detecta si el endpoint acepta Content-Type: application/json (respuesta != 415)."""
+    with _json_accept_lock:
+        if base_url in _json_accept_cache:
+            return _json_accept_cache[base_url]
+    try:
+        h = dict(headers)
+        h["Content-Type"] = "application/json"
+        r = requests.post(base_url, json={}, headers=h, verify=False, timeout=4)
+        accepts = r.status_code != 415
+    except Exception:
+        accepts = False
+    with _json_accept_lock:
+        _json_accept_cache[base_url] = accepts
+    return accepts
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +271,7 @@ def ssti(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
     print()
     sys.stdout.flush()
 
-    total_tasks = (len(urip) * 2 + len(urif)) * len(wordlist)
+    total_tasks = (len(urip) * 3 + len(urif) * 2) * len(wordlist)  # GET+POST+JSON (urip) + FORM+JSON (urif)
     current = 0
     lock = threading.Lock()
     vulnerable_endpoints = set()
@@ -573,15 +600,109 @@ def ssti(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
             current += 1
             update_progress(current, total_tasks)
 
+    def test_json_ssti(url, payload):
+        """Prueba SSTI vía JSON body. Soporta endpoints con y sin query params."""
+        nonlocal current
+        parsed = urlparse(url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        qs = parse_qs(parsed.query)
+
+        if vuln_manager.should_skip_url(base_url, base_url_only=True):
+            with lock:
+                current += 1
+                update_progress(current, total_tasks)
+            return
+
+        headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
+
+        if not _probe_accepts_json(base_url, headers):
+            with lock:
+                current += 1
+                update_progress(current, total_tasks)
+            return
+
+        if ban.is_banned(parsed.netloc):
+            with lock:
+                current += 1
+                update_progress(current, total_tasks)
+            return
+
+        json_headers = dict(headers)
+        json_headers["Content-Type"] = "application/json"
+
+        fields_to_test = list(qs.keys()) if qs else _JSON_COMMON_FIELDS
+
+        for param in fields_to_test:
+            if vuln_manager.should_skip_url(base_url, param):
+                continue
+
+            # Baseline: verificar que TEST123 se refleje en la respuesta JSON
+            baseline_key = f"JSON-{base_url}-{param}"
+            if baseline_key not in baseline_cache:
+                try:
+                    rb = requests.post(base_url, json={param: "TEST123"}, headers=json_headers,
+                                       verify=False, timeout=5)
+                    baseline_cache[baseline_key] = rb.text.lower() if rb.status_code == 200 else ""
+                except Exception:
+                    baseline_cache[baseline_key] = ""
+            baseline = baseline_cache[baseline_key]
+
+            if not baseline or "test123" not in baseline:
+                continue
+
+            try:
+                r = requests.post(base_url, json={param: payload}, headers=json_headers,
+                                  verify=False, timeout=5)
+                ban.record(parsed.netloc, r.status_code, r, base_url)
+
+                if r.status_code == 200 and is_ssti_response(r.text, payload) and r.text.lower() != baseline:
+                    is_vulnerable, successful_payloads, engine, rce_ok, rce_output = \
+                        verify_ssti_vulnerability(base_url, param, "post", headers, payload)
+
+                    if not is_vulnerable:
+                        continue
+
+                    with lock:
+                        if base_url not in vulnerable_endpoints:
+                            vulnerable_endpoints.add(base_url)
+                            vuln_manager.mark_as_exploited(base_url, param)
+                            vuln_manager.mark_as_exploited(base_url, base_url_only=True)
+                            with stdout_lock:
+                                encoded = quote(payload, safe='')
+                                engine_label = f"engine:{engine}" if engine != "unknown" else "engine:unknown"
+                                rce_label = f" \033[1;31m[RCE CONFIRMED: {rce_output[:60]}]\033[0m" if rce_ok else ""
+                                print_vulnerability(
+                                    f"\033[1;32m[JSON-POST][SSTI][{engine_label}]\033[0m "
+                                    f"{base_url} \033[2m(field: {param})\033[0m{rce_label}"
+                                )
+                            entry = f"{base_url}?{param}={encoded}|||JSON_BODY:true|||SSTI_ENGINE:{engine}"
+                            if rce_ok:
+                                entry += f"|||SSTI_RCE:{quote(rce_output[:120], safe='')}"
+                            urls_vulnerables.append(entry)
+                    break
+
+            except requests.exceptions.Timeout:
+                continue
+            except requests.exceptions.RequestException:
+                continue
+            except Exception:
+                continue
+
+        with lock:
+            current += 1
+            update_progress(current, total_tasks)
+
     # Crear tareas de manera más eficiente
     def _iter_ssti_tasks():
         for url in urip:
             for payload in wordlist:
                 yield (test_url, url, payload)
                 yield (test_post, url, payload)
+                yield (test_json_ssti, url, payload)
         for url in urif:
             for payload in wordlist:
                 yield (test_form, url, payload)
+                yield (test_json_ssti, url, payload)
 
     run_threadpool_pending_bounded(_iter_ssti_tasks(), threads)
 

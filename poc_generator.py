@@ -1714,6 +1714,7 @@ class PoCGenerator:
             url = vuln_url
             payload = ""
             form_data = None
+            json_field = None
             
             # Si es un formulario, extraer datos
             if ' => ' in vuln_url:
@@ -1724,34 +1725,37 @@ class PoCGenerator:
                 try:
                     import ast
                     form_data = ast.literal_eval(form_part)
-                    # Extraer payload del primer campo del formulario
                     if form_data:
                         payload = list(form_data.values())[0]
                 except:
                     form_data = {}
             else:
-                # Extraer payload de la URL
                 from urllib.parse import parse_qs, urlparse
                 parsed = urlparse(vuln_url)
                 query_params = parse_qs(parsed.query)
                 if query_params:
                     payload = list(query_params.values())[0][0]
-                    # Decodificar URL encoding
+                    json_field = list(query_params.keys())[0]
                     from urllib.parse import unquote
                     payload = unquote(payload)
-                    # Si es base64, decodificarlo
                     try:
                         import base64
                         decoded = base64.b64decode(payload).decode('utf-8')
                         payload = decoded
                     except:
-                        pass  # Si no es base64, usar el payload original
+                        pass
             
-            # Codificar payload en base64 para evitar problemas con caracteres especiales
+            # Detectar inyección por JSON body
+            if bypass_meta.get("JSON_BODY") == "true":
+                method = "JSON-POST"
+                from urllib.parse import urlparse as _up
+                _p = _up(vuln_url)
+                url = f"{_p.scheme}://{_p.netloc}{_p.path}"
+            
+            # Codificar payload en base64 para evitar ejecución en el PoC HTML
             import base64
             encoded_payload = base64.b64encode(payload.encode('utf-8')).decode('utf-8')
             
-            # Codificar también los datos del formulario en base64 para evitar ejecución
             encoded_form_data = {}
             if form_data:
                 for key, value in form_data.items():
@@ -1763,6 +1767,7 @@ class PoCGenerator:
                 'url': url,
                 'payload': encoded_payload,
                 'form_data': encoded_form_data,
+                'json_field': json_field,
                 'bypass_meta': bypass_meta,
             })
         
@@ -2068,6 +2073,12 @@ class PoCGenerator:
         function buildCurl() {{
             if (!selectedVuln) return '';
             const url = selectedVuln.url;
+            const decodedPayload = atob(selectedVuln.payload || '');
+            if (selectedVuln.method === 'JSON-POST') {{
+                const field = selectedVuln.json_field || 'param';
+                const body = JSON.stringify({{[field]: decodedPayload}});
+                return "curl -sk -X POST '" + url + "' -H 'Content-Type: application/json' -d '" + body + "'";
+            }}
             if (selectedVuln.method === 'POST' && selectedVuln.form_data && Object.keys(selectedVuln.form_data).length > 0) {{
                 const parts = [];
                 for (const [name, encodedValue] of Object.entries(selectedVuln.form_data)) {{
@@ -2785,6 +2796,7 @@ class PoCGenerator:
             url = vuln_url
             payload = ""
             form_data = None
+            json_field = None
             
             # Si es un formulario, extraer datos
             if ' => ' in vuln_url:
@@ -2795,18 +2807,24 @@ class PoCGenerator:
                 try:
                     import ast
                     form_data = ast.literal_eval(form_part)
-                    # Extraer payload del primer campo del formulario
                     if form_data:
                         payload = list(form_data.values())[0]
                 except:
                     form_data = {}
             else:
-                # Extraer payload de la URL
                 from urllib.parse import parse_qs, urlparse
                 parsed = urlparse(vuln_url)
                 query_params = parse_qs(parsed.query)
                 if query_params:
                     payload = list(query_params.values())[0][0]
+                    json_field = list(query_params.keys())[0]
+            
+            # Detectar inyección por JSON body
+            if bypass_meta.get("JSON_BODY") == "true":
+                method = "JSON-POST"
+                from urllib.parse import urlparse as _up
+                _p = _up(vuln_url)
+                url = f"{_p.scheme}://{_p.netloc}{_p.path}"
             
             vuln_data.append({
                 'index': i,
@@ -2814,6 +2832,7 @@ class PoCGenerator:
                 'url': url,
                 'payload': payload,
                 'form_data': form_data,
+                'json_field': json_field,
                 'bypass_meta': bypass_meta,
             })
         
@@ -2944,6 +2963,13 @@ class PoCGenerator:
 
         function buildCurl(vuln) {{
             if (!vuln) return '';
+            if (vuln.method === 'JSON-POST') {{
+                const field = vuln.json_field || 'param';
+                const body = JSON.stringify({{[field]: vuln.payload}});
+                // Use double-quoted outer shell string so single quotes in payload don't break it
+                const escapedBody = body.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+                return 'curl -sk -X POST "' + vuln.url + '" -H "Content-Type: application/json" -d "' + escapedBody + '"';
+            }}
             if (vuln.method === 'POST' && vuln.form_data && Object.keys(vuln.form_data).length > 0) {{
                 const parts = [];
                 for (const [n, v] of Object.entries(vuln.form_data))
@@ -2954,6 +2980,11 @@ class PoCGenerator:
         }}
 
         const SQLI_BYPASS_EXPLANATIONS = {{
+            "AUTH-BYPASS": {{
+                "context": "SQL Injection — Authentication Bypass",
+                "why": "The login endpoint uses a SQL query that concatenates user input without sanitization (e.g. SELECT * FROM users WHERE email='INPUT'). A tautology payload like ' OR 1=1-- makes the WHERE clause always true, returning the first user (usually admin) and granting authenticated access.",
+                "how": "Baseline request (benign email) returned HTTP 401 Unauthorized. Payload ' OR 1=1 -- returned HTTP 200 with an authentication token, confirming the bypass. No error message — the vulnerability is revealed only by the status code change."
+            }},
             "BOOLEAN-BASED": {{
                 "context": "Boolean-Based Blind SQL Injection",
                 "why": "No SQL error is returned, but the application responds differently to logically true vs. false conditions (e.g. AND 1=1 vs AND 1=2). This reveals injectable parameters without explicit error messages.",
@@ -4104,6 +4135,7 @@ class PoCGenerator:
             url = vuln_url
             payload = ""
             form_data = None
+            json_field = None
             
             # Si es un formulario, extraer datos
             if ' => ' in vuln_url:
@@ -4114,18 +4146,24 @@ class PoCGenerator:
                 try:
                     import ast
                     form_data = ast.literal_eval(form_part)
-                    # Extraer payload del primer campo del formulario
                     if form_data:
                         payload = list(form_data.values())[0]
                 except:
                     form_data = {}
             else:
-                # Extraer payload de la URL
                 from urllib.parse import parse_qs, urlparse
                 parsed = urlparse(vuln_url)
                 query_params = parse_qs(parsed.query)
                 if query_params:
                     payload = list(query_params.values())[0][0]
+                    json_field = list(query_params.keys())[0]
+            
+            # Detectar inyección por JSON body
+            if bypass_meta.get("JSON_BODY") == "true":
+                method = "JSON-POST"
+                from urllib.parse import urlparse as _up
+                _p = _up(vuln_url)
+                url = f"{_p.scheme}://{_p.netloc}{_p.path}"
             
             vuln_data.append({
                 'index': i,
@@ -4133,6 +4171,7 @@ class PoCGenerator:
                 'url': url,
                 'payload': payload,
                 'form_data': form_data,
+                'json_field': json_field,
                 'bypass_meta': bypass_meta,
             })
         
@@ -4269,6 +4308,11 @@ class PoCGenerator:
 
         function buildCurl(vuln) {{
             if (!vuln) return '';
+            if (vuln.method === 'JSON-POST') {{
+                const field = vuln.json_field || 'param';
+                const body = JSON.stringify({{[field]: vuln.payload}});
+                return "curl -sk -X POST '" + vuln.url + "' -H 'Content-Type: application/json' -d '" + body + "'";
+            }}
             if (vuln.method === 'POST' && vuln.form_data && Object.keys(vuln.form_data).length > 0) {{
                 const parts = [];
                 for (const [n, v] of Object.entries(vuln.form_data))

