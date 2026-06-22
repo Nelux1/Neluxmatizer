@@ -73,6 +73,12 @@ def clickjacking(urip, urif, urls_vulnerables, threads, custom_headers, random_a
     response_cache = {}
     stdout_lock = Lock()
 
+    try:
+        from scanners.ban_detector import get_ban_detector
+    except ImportError:
+        from ban_detector import get_ban_detector
+    ban = get_ban_detector()
+
     # Construcción del header
     # def get_headers():
     #     headers = custom_headers or {}
@@ -110,10 +116,18 @@ def clickjacking(urip, urif, urls_vulnerables, threads, custom_headers, random_a
             return
 
         try:
+            _domain = urlparse(url).netloc
+            if ban.is_banned(_domain):
+                with lock:
+                    progress += 1
+                    update_progress(progress, total_tasks)
+                return
+
             # Cache de respuestas para evitar requests duplicadas
             if url not in response_cache:
                 headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
                 response = requests.get(url, headers=headers, verify=False, timeout=5)
+                ban.record(_domain, response.status_code, response, url)
                 response_cache[url] = response
             else:
                 response = response_cache[url]

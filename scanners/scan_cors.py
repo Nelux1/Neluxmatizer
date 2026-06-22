@@ -57,6 +57,12 @@ def cors(urip, urif, urls_vulnerables, threads, custom_headers=None, random_agen
     baseline_cache = {}
     stdout_lock = threading.Lock()
 
+    try:
+        from scanners.ban_detector import get_ban_detector
+    except ImportError:
+        from ban_detector import get_ban_detector
+    ban = get_ban_detector()
+
     def test_url(url):
         nonlocal found, current
         try:
@@ -120,9 +126,18 @@ def cors(urip, urif, urls_vulnerables, threads, custom_headers=None, random_agen
                         for _k in list(baseline_cache.keys())[:20000]:
                             del baseline_cache[_k]
                 
+                _cors_domain = urlparse(url).netloc
+                if ban.is_banned(_cors_domain):
+                    with lock:
+                        if current < total_tasks:
+                            current += 1
+                            update_progress(current, total_tasks)
+                    return
+
                 try:
                     response = requests.get(url, headers=headers, verify=False, timeout=5)
-                    
+                    ban.record(_cors_domain, response.status_code, response, url)
+
                     is_vulnerable, vuln_type, risk_level = is_cors_vulnerable(response.headers, origin)
                     
                     if is_vulnerable:

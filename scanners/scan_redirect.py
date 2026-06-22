@@ -87,6 +87,12 @@ def redirect(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, ra
     baseline_cache = {}
     stdout_lock = threading.Lock()
 
+    try:
+        from scanners.ban_detector import get_ban_detector
+    except ImportError:
+        from ban_detector import get_ban_detector
+    ban = get_ban_detector()
+
     def test_get_redirect(url):
         nonlocal current, found
         parsed = urlparse(url)
@@ -136,12 +142,19 @@ def redirect(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, ra
                     baseline_location = baseline_cache[baseline_key]
 
                 # Payload
+                if ban.is_banned(parsed.netloc):
+                    with lock:
+                        current += 1
+                        update_progress(current, total_tasks)
+                    return
+
                 mod_params = params.copy()
                 mod_params[param] = payload
                 new_url = f"{base}?{urlencode(mod_params, doseq=True)}"
-                
+
                 try:
                     resp = session.get(new_url, allow_redirects=False, timeout=5)
+                    ban.record(parsed.netloc, resp.status_code, resp, base)
                     location = resp.headers.get("Location", "")
 
                     if (

@@ -398,6 +398,12 @@ def crlf(urip, urif, urls_vulnerables, threads, custom_headers, random_agent):
     baseline_cache = {}
     stdout_lock = Lock()
 
+    try:
+        from scanners.ban_detector import get_ban_detector
+    except ImportError:
+        from ban_detector import get_ban_detector
+    ban = get_ban_detector()
+
     def test_url(url):
         nonlocal current
         base_url = url.split('?')[0]
@@ -450,12 +456,18 @@ def crlf(urip, urif, urls_vulnerables, threads, custom_headers, random_agent):
                     headers = _crlf_with_cache_headers(
                         get_headers(random_agent=random_agent, custom_headers=custom_headers)
                     )
+                    _crlf_domain = urlparse(req_url).netloc
+                    if ban.is_banned(_crlf_domain):
+                        bump()
+                        return
+
                     got_vuln = False
                     for attempt in range(CRLF_PROBE_ATTEMPTS):
                         try:
                             response = requests.get(
                                 req_url, headers=headers, verify=False, timeout=5
                             )
+                            ban.record(_crlf_domain, response.status_code, response, req_url)
                             is_vulnerable, reason = is_crlf_vulnerable(
                                 response.headers,
                                 baseline_headers,

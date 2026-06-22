@@ -253,6 +253,12 @@ def ssti(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
     baseline_cache = {}
     form_cache = {}
     stdout_lock = threading.Lock()
+
+    try:
+        from scanners.ban_detector import get_ban_detector
+    except ImportError:
+        from ban_detector import get_ban_detector
+    ban = get_ban_detector()
     
     # Payloads de verificación OBLIGATORIOS para confirmar SSTI real
     verification_payloads = [
@@ -371,9 +377,16 @@ def ssti(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
 
             # Ahora prueba con payload SSTI
             headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
+            if ban.is_banned(parsed.netloc):
+                with lock:
+                    current += 1
+                    update_progress(current, total_tasks)
+                return
+
             try:
                 r = requests.get(base_url, params={param: payload}, headers=headers, verify=False, timeout=5)
-                
+                ban.record(parsed.netloc, r.status_code, r, base_url)
+
                 # Solo procesar si la respuesta es exitosa
                 if r.status_code == 200 and is_ssti_response(r.text, payload) and r.text.lower() != baseline:
                     is_vulnerable, successful_payloads, engine, rce_ok, rce_output = \

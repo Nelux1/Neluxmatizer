@@ -82,6 +82,12 @@ def hostheader_injection(
     stdout_lock = threading.Lock()
     urls_vulnerables: list = []
 
+    try:
+        from scanners.ban_detector import get_ban_detector
+    except ImportError:
+        from ban_detector import get_ban_detector
+    ban = get_ban_detector()
+
     def test_url(url: str):
         nonlocal current, found
 
@@ -106,9 +112,16 @@ def hostheader_injection(
             session = requests.Session()
             session.headers.update(base_headers)
 
+        if ban.is_banned(url_host):
+            with lock:
+                current += 1
+                update_progress(current, total)
+            return
+
         # Baseline sin inyección
         try:
             baseline = session.get(url, verify=False, timeout=5, allow_redirects=False)
+            ban.record(url_host, baseline.status_code, baseline, url)
             baseline_text = baseline.text
         except Exception:
             with lock:

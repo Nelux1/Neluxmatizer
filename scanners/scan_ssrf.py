@@ -338,6 +338,12 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
     form_cache = {}
     stdout_lock = threading.Lock()
 
+    try:
+        from scanners.ban_detector import get_ban_detector
+    except ImportError:
+        from ban_detector import get_ban_detector
+    ban = get_ban_detector()
+
     def test_url(url, payload):
         nonlocal current
         parsed = urlparse(url)
@@ -375,11 +381,18 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                     baseline_cache[baseline_key] = ""
             base_content = baseline_cache[baseline_key]
             
+            if ban.is_banned(parsed.netloc):
+                with lock:
+                    current += 1
+                    update_progress(current, total_tasks)
+                return
+
             try:
                 start_time = time.time()
                 r = requests.get(base, params=data, headers=headers, verify=False, timeout=5)
                 end_time = time.time()
                 elapsed = end_time - start_time
+                ban.record(parsed.netloc, r.status_code, r, base)
 
                 # Solo procesar si la respuesta es exitosa Y NO es un bloqueo (403, 429, etc.)
                 if r.status_code == 200:
