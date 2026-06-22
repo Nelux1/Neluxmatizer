@@ -148,12 +148,9 @@ def xxe(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
 
             with lock:
                 if base in vulnerable_endpoints:
-                    current += 1
-                    update_progress(current, total_tasks)
-                    return
+                    return  # finally incrementa current
 
             headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
-            # Corregir Content-Type para que el servidor procese el cuerpo como XML
             headers['Content-Type'] = content_type
 
             baseline_payload = '<?xml version="1.0"?><data>TEST123</data>'
@@ -171,10 +168,7 @@ def xxe(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
 
             baseline_text = baseline_cache[baseline_key]
             if not baseline_text:
-                with lock:
-                    current += 1
-                    update_progress(current, total_tasks)
-                return
+                return  # finally incrementa current
 
             res = requests.post(base, data=payload, headers=headers, timeout=5, verify=False)
 
@@ -211,14 +205,11 @@ def xxe(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
         try:
             with lock:
                 if target in vulnerable_endpoints:
-                    current += 1
-                    update_progress(current, total_tasks)
-                    return
+                    return  # finally incrementa current
 
             headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
             headers['Content-Type'] = content_type
 
-            # Baseline: si el endpoint no existe o rechaza XML → saltar
             baseline_payload = '<?xml version="1.0"?><data>TEST123</data>'
             baseline_key = f"PROBE-{target}-{content_type}"
 
@@ -238,10 +229,7 @@ def xxe(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
 
             baseline_text = baseline_cache[baseline_key]
             if baseline_text is None:
-                with lock:
-                    current += 1
-                    update_progress(current, total_tasks)
-                return
+                return  # finally incrementa current
 
             res = requests.post(target, data=payload, headers=headers, timeout=5, verify=False)
 

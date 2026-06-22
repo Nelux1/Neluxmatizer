@@ -16,7 +16,31 @@ except ImportError:
 import base64
 import concurrent.futures
 import threading
-from tqdm import tqdm
+
+try:
+    from tqdm import tqdm
+    _TQDM_AVAILABLE = True
+except ImportError:
+    _TQDM_AVAILABLE = False
+
+def _parse_bypass_metadata(url_entry: str) -> tuple:
+    """
+    Splits a url_entry that may contain bypass metadata appended with '|||'.
+    Returns (clean_url_string, metadata_dict).
+    Metadata keys: BYPASS_TECHNIQUE, BYPASS_ORIGINAL, SSTI_ENGINE, SSTI_RCE.
+    """
+    if "|||" not in url_entry:
+        return url_entry, {}
+    parts = url_entry.split("|||")
+    clean = parts[0]
+    meta = {}
+    for part in parts[1:]:
+        if ":" in part:
+            k, v = part.split(":", 1)
+            from urllib.parse import unquote
+            meta[k.strip()] = unquote(v.strip())
+    return clean, meta
+
 
 class PoCGenerator:
     def __init__(self, output_dir="output", max_workers=4, screenshot_timeout=30):
@@ -130,25 +154,43 @@ class PoCGenerator:
             sys.stdout.flush()
             return []
         
-        # Execute in parallel with progress bar
+        # Execute in parallel with progress bar (tqdm si está disponible, sino contador simple)
         results = []
-        with tqdm(total=len(tasks), desc="Generando PoCs", unit="PoC") as pbar:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                future_to_task = {executor.submit(task['func'], *task['args']): task for task in tasks}
-                
-                for future in concurrent.futures.as_completed(future_to_task):
-                    task = future_to_task[future]
-                    try:
-                        result = future.result(timeout=30)  # Timeout por PoC individual
-                        if result:
-                            results.append(result)
-                            pbar.set_postfix_str(f"✅ {task['type']}")
-                        else:
-                            pbar.set_postfix_str(f"❌ {task['type']}")
-                    except Exception as e:
-                        pbar.set_postfix_str(f"❌ {task['type']} - {str(e)[:20]}")
-                    finally:
+        total = len(tasks)
+        done = 0
+        lock_counter = threading.Lock()
+
+        def _run_with_progress(executor, future_to_task, pbar=None):
+            nonlocal done
+            for future in concurrent.futures.as_completed(future_to_task):
+                task = future_to_task[future]
+                try:
+                    result = future.result(timeout=30)
+                    if result:
+                        results.append(result)
+                        status = f"✅ {task['type']}"
+                    else:
+                        status = f"❌ {task['type']}"
+                except Exception as e:
+                    status = f"❌ {task['type']} - {str(e)[:20]}"
+                with lock_counter:
+                    done += 1
+                    if pbar is not None:
+                        pbar.set_postfix_str(status)
                         pbar.update(1)
+                    else:
+                        sys.stdout.write(f"\r  PoC {done}/{total} — {status}   ")
+                        sys.stdout.flush()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            future_to_task = {executor.submit(task['func'], *task['args']): task for task in tasks}
+            if _TQDM_AVAILABLE:
+                with tqdm(total=total, desc="Generando PoCs", unit="PoC") as pbar:
+                    _run_with_progress(executor, future_to_task, pbar)
+            else:
+                sys.stdout.write(f"[*] Generando {total} PoC(s)...\n")
+                sys.stdout.flush()
+                _run_with_progress(executor, future_to_task)
         
         sys.stdout.write(f"\n🎉 Generación completada: {len(results)}/{len(tasks)} PoCs exitosos\n")
         sys.stdout.flush()
@@ -968,6 +1010,7 @@ class PoCGenerator:
     <button class="button" onclick="testCORS()">🧪 Test CORS (iframe)</button>
     <button class="button" onclick="testCORSWithFetch()">🧪 Test CORS (fetch)</button>
     <button class="button" onclick="openInNewTab()">🔗 Open in New Tab</button>
+    <button class="button" onclick="copyCurlCors()">📋 Copy cURL</button>
     <button class="button" onclick="showAnalysis()">🔍 Show Analysis</button>
     <button class="button" onclick="showDetails()">📊 Show Details</button>
     
@@ -1176,6 +1219,26 @@ class PoCGenerator:
             window.open(url, '_blank');
         }}
         
+        function copyCurlCors() {{
+            const url = selectedVuln ? selectedVuln.url : '';
+            if (!url) {{ alert('Select a vulnerability first'); return; }}
+            // Reproduce CORS check: inject Origin evil.com and check response headers
+            const curlCmd = "curl -sk -H 'Origin: https://evil.com' -H 'Access-Control-Request-Method: GET' -v '" + url + "' 2>&1 | grep -i 'access-control'";
+            navigator.clipboard.writeText(curlCmd).then(function() {{
+                const btn = event.target;
+                const orig = btn.textContent;
+                btn.textContent = '✅ Copied!';
+                setTimeout(() => {{ btn.textContent = orig; }}, 2000);
+            }}).catch(function() {{
+                const t = document.createElement('textarea');
+                t.value = curlCmd;
+                document.body.appendChild(t); t.select();
+                document.execCommand('copy');
+                document.body.removeChild(t);
+                alert('cURL copied!');
+            }});
+        }}
+
         function copyUrl() {{
             const url = selectedVuln ? selectedVuln.url : '';
             navigator.clipboard.writeText(url).then(function() {{
@@ -1578,12 +1641,11 @@ class PoCGenerator:
             if (select.value === '') return;
             const vuln = vulnerabilities[parseInt(select.value, 10)];
             navigator.clipboard.writeText(vuln.url).then(() => {{
-                alert('URL copied to clipboard');
+                alert('URL copied');
             }}).catch(() => {{
                 const t = document.createElement('textarea');
                 t.value = vuln.url;
-                document.body.appendChild(t);
-                t.select();
+                document.body.appendChild(t); t.select();
                 document.execCommand('copy');
                 document.body.removeChild(t);
             }});
@@ -1644,7 +1706,10 @@ class PoCGenerator:
         
         # Procesar las URLs vulnerables
         vuln_data = []
-        for i, vuln_url in enumerate(vulnerable_urls):
+        for i, raw_entry in enumerate(vulnerable_urls):
+            # Separar metadatos de bypass del entry principal
+            vuln_url, bypass_meta = _parse_bypass_metadata(raw_entry)
+
             method = "GET"
             url = vuln_url
             payload = ""
@@ -1697,7 +1762,8 @@ class PoCGenerator:
                 'method': method,
                 'url': url,
                 'payload': encoded_payload,
-                'form_data': encoded_form_data
+                'form_data': encoded_form_data,
+                'bypass_meta': bypass_meta,
             })
         
         # Generate dropdown options (sanitizadas)
@@ -1738,6 +1804,14 @@ class PoCGenerator:
         .method-post {{ background: #e74c3c; color: white; }}
         .payload-box {{ background: #e74c3c; color: white; padding: 5px; border-radius: 3px; font-family: monospace; margin: 5px 0; }}
         .xss-payload {{ background: #e74c3c; color: white; padding: 5px; border-radius: 3px; font-family: monospace; margin: 5px 0; }}
+        .bypass-box {{ background: white; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 5px solid #8e44ad; display: none; }}
+        .bypass-box h3 {{ color: #8e44ad; margin-top: 0; }}
+        .bypass-table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
+        .bypass-table th {{ background: #8e44ad; color: white; padding: 8px 12px; text-align: left; }}
+        .bypass-table td {{ padding: 8px 12px; border-bottom: 1px solid #eee; vertical-align: top; }}
+        .bypass-table td:first-child {{ font-weight: bold; color: #555; width: 28%; }}
+        .code-inline {{ background: #2c3e50; color: #2ecc71; padding: 2px 6px; border-radius: 3px; font-family: monospace; font-size: 13px; word-break: break-all; }}
+        .bypass-curl {{ background: #1a252f; color: #ecf0f1; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 12px; margin: 5px 0; word-break: break-all; }}
     </style>
 </head>
 <body>
@@ -1811,9 +1885,67 @@ class PoCGenerator:
         <p><strong>Risk Level:</strong> High - Can lead to complete account compromise</p>
     </div>
 
+    <div id="bypassBox" class="bypass-box">
+        <h3>⚡ Bypass Analysis</h3>
+        <table class="bypass-table">
+            <thead><tr><th>Field</th><th>Details</th></tr></thead>
+            <tbody id="bypassTableBody"></tbody>
+        </table>
+    </div>
+
     <script>
         const vulnerabilities = {json.dumps(vuln_data)};
         let selectedVuln = null;
+
+        const XSS_BYPASS_EXPLANATIONS = {{
+            "js_string": {{
+                "context": "JavaScript String Context",
+                "why": "The input is reflected inside a JavaScript string literal (e.g. var x = \\'INPUT\\'). Standard HTML tags like &lt;h1&gt; were sanitized or encoded, but the injected value breaks out of the string with a quote character and injects executable code.",
+                "how": "Close the string quote → inject JS expression → comment out the rest (e.g. \\';alert(1)//)"
+            }},
+            "html_attr": {{
+                "context": "HTML Attribute Context",
+                "why": "The input lands inside an HTML attribute (e.g. value=\\"INPUT\\"  or class=\\'INPUT\\'). Angle brackets may be blocked but event-handler injection is possible by closing the attribute.",
+                "how": "Close the attribute quote → add event handler (e.g. \\" onfocus=alert(1) x=\\")"
+            }},
+            "html_body": {{
+                "context": "HTML Body Context",
+                "why": "The input is reflected directly in the HTML body. The original script/h1 tags may be stripped, but alternative tag+event combinations bypass the filter.",
+                "how": "Use tags without explicit &lt;script&gt; (e.g. &lt;img src=x onerror=alert(1)&gt;, &lt;svg onload=...&gt;)"
+            }},
+            "href_attr": {{
+                "context": "href/src/action Attribute Context",
+                "why": "The input lands inside a URL-type attribute. The browser permits the javascript: URI scheme in interactive elements (a, iframe, form action).",
+                "how": "Inject javascript:alert(1) as the attribute value; executes on click or load."
+            }}
+        }};
+
+        const WAF_BYPASS_EXPLANATION = {{
+            "context": "WAF / Filter Bypass",
+            "why": "The server returned a 403/406/429 (WAF block) for the standard payload. A WAF bypass payload using encoding, case variation, or whitespace substitution evaded the filter.",
+            "how": "Encoding tricks (&#x3c;script&#x3e;), Unicode escapes, mixed case, comment insertion, or null-byte injection."
+        }};
+
+        function _xssGetBypassExplanation(technique) {{
+            if (!technique) return null;
+            // GET-BYPASS[js_string] or FORM-BYPASS[html_attr] or GET-WAF-BYPASS[cloudflare]
+            const wafMatch = technique.match(/WAF-BYPASS/i);
+            if (wafMatch) return WAF_BYPASS_EXPLANATION;
+            const ctxMatch = technique.match(/\\[([^\\]]+)\\]/);
+            if (ctxMatch) {{
+                const ctx = ctxMatch[1].toLowerCase();
+                return XSS_BYPASS_EXPLANATIONS[ctx] || {{
+                    "context": ctx,
+                    "why": "Context-specific bypass was required to execute the injection.",
+                    "how": "Payload adapted to the reflection context detected in the response."
+                }};
+            }}
+            return {{
+                "context": "Unknown Context",
+                "why": "A bypass payload was required to confirm the injection.",
+                "how": "See bypass payload below."
+            }};
+        }}
         
         function selectVulnerability() {{
             const select = document.getElementById('vulnSelect');
@@ -1870,6 +2002,38 @@ class PoCGenerator:
             urlBox.style.display = 'block';
             openBtn.disabled = false;
             copyBtn.disabled = false;
+
+            // ── Bypass Analysis box ────────────────────────────────────────
+            const bypassBox = document.getElementById('bypassBox');
+            const bypassBody = document.getElementById('bypassTableBody');
+            bypassBody.innerHTML = '';
+            const meta = selectedVuln.bypass_meta || {{}};
+            if (meta.BYPASS_TECHNIQUE) {{
+                const explanation = _xssGetBypassExplanation(meta.BYPASS_TECHNIQUE);
+                const curlCmd = buildCurl();
+                const rows = [
+                    ["Technique", escHtml(meta.BYPASS_TECHNIQUE)],
+                    ["Injection Context", explanation ? escHtml(explanation.context) : '—'],
+                    ["Original probe payload", '<span class="code-inline">' + escHtml(meta.BYPASS_ORIGINAL || '—') + '</span>'],
+                    ["Winning bypass payload", '<span class="code-inline">' + escHtml(atob(selectedVuln.payload)) + '</span>'],
+                    ["Why it works", explanation ? explanation.why : '—'],
+                    ["How it was done", explanation ? explanation.how : '—'],
+                    ["Reproduction (cURL)", '<div class="bypass-curl">' + escHtml(curlCmd) + '</div>'],
+                ];
+                rows.forEach(([label, val]) => {{
+                    const tr = document.createElement('tr');
+                    const td1 = document.createElement('td');
+                    td1.textContent = label;
+                    const td2 = document.createElement('td');
+                    td2.innerHTML = val;
+                    tr.appendChild(td1);
+                    tr.appendChild(td2);
+                    bypassBody.appendChild(tr);
+                }});
+                bypassBox.style.display = 'block';
+            }} else {{
+                bypassBox.style.display = 'none';
+            }}
         }}
         
         function showAnalysis() {{
@@ -2003,21 +2167,22 @@ class PoCGenerator:
     def generate_lfi_poc(self, vulnerable_urls, screenshot=False, domain=None):
         """Genera PoC para LFI con múltiples URLs vulnerables"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Crear un hash único basado en las URLs para evitar sobrescribir PoCs
         import hashlib
         urls_str = '|'.join(vulnerable_urls)
         url_hash = hashlib.md5(urls_str.encode()).hexdigest()[:8]
         
-        # Extraer el dominio base de la primera URL
+        # Extraer el dominio base de la primera URL (sin metadatos)
         from urllib.parse import urlparse
         if vulnerable_urls:
-            base_domain = urlparse(vulnerable_urls[0]).netloc
+            _first_clean, _ = _parse_bypass_metadata(vulnerable_urls[0])
+            base_domain = urlparse(_first_clean).netloc
         else:
             base_domain = "unknown"
         
         # Procesar las URLs vulnerables
         vuln_data = []
-        for i, vuln_url in enumerate(vulnerable_urls):
+        for i, raw_entry in enumerate(vulnerable_urls):
+            vuln_url, bypass_meta = _parse_bypass_metadata(raw_entry)
             method = "GET"
             url = vuln_url
             payload = ""
@@ -2033,7 +2198,8 @@ class PoCGenerator:
                 'index': i,
                 'method': method,
                 'url': url,
-                'payload': payload
+                'payload': payload,
+                'bypass_meta': bypass_meta,
             })
         
         # Generate dropdown options
@@ -2068,6 +2234,14 @@ class PoCGenerator:
         .method-get {{ background: #27ae60; color: white; }}
         .payload-box {{ background: #e74c3c; color: white; padding: 5px; border-radius: 3px; font-family: monospace; margin: 5px 0; }}
         .lfi-payload {{ background: #e67e22; color: white; padding: 5px; border-radius: 3px; font-family: monospace; margin: 5px 0; }}
+        .bypass-box {{ background: white; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 5px solid #8e44ad; display: none; }}
+        .bypass-box h3 {{ color: #8e44ad; margin-top: 0; }}
+        .bypass-table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
+        .bypass-table th {{ background: #8e44ad; color: white; padding: 8px 12px; text-align: left; }}
+        .bypass-table td {{ padding: 8px 12px; border-bottom: 1px solid #eee; vertical-align: top; }}
+        .bypass-table td:first-child {{ font-weight: bold; color: #555; width: 28%; }}
+        .code-inline {{ background: #2c3e50; color: #2ecc71; padding: 2px 6px; border-radius: 3px; font-family: monospace; font-size: 13px; word-break: break-all; }}
+        .bypass-curl {{ background: #1a252f; color: #ecf0f1; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 12px; margin: 5px 0; word-break: break-all; }}
     </style>
 </head>
 <body>
@@ -2097,7 +2271,7 @@ class PoCGenerator:
     
     <div style="text-align: center; margin: 20px 0;">
         <button class="button" onclick="openInNewTab()" id="openBtn" disabled>🔗 Open in New Tab (LFI will execute)</button>
-        <button class="button" onclick="copyUrl()" id="copyBtn" disabled>📋 Copy URL</button>
+        <button class="button" onclick="copyUrl()" id="copyBtn" disabled>📋 Copy cURL</button>
         <button class="button" onclick="showAnalysis()">🔍 Show Analysis</button>
         <button class="button" onclick="showDetails()">📊 Show Details</button>
     </div>
@@ -2129,8 +2303,33 @@ class PoCGenerator:
         <p><strong>Scan Date:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
     </div>
 
+    <div id="bypassBox" class="bypass-box">
+        <h3>⚡ Bypass Analysis</h3>
+        <table class="bypass-table">
+            <thead><tr><th>Field</th><th>Details</th></tr></thead>
+            <tbody id="bypassTableBody"></tbody>
+        </table>
+    </div>
+
     <script>
         const vulnerabilities = {json.dumps(vuln_data)};
+
+        function escHtml(str) {{
+            return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        }}
+
+        function buildCurl(vuln) {{
+            return "curl -sk '" + (vuln ? vuln.url : '') + "'";
+        }}
+
+        const LFI_BYPASS_EXPLANATIONS = {{
+            "LFI-BYPASS": {{
+                "context": "Path Traversal / PHP Wrapper Bypass",
+                "why": "The initial traversal sequence (e.g. ../etc/passwd) was blocked or sanitized. The server showed partial indicators of traversal (error messages, path errors), indicating a filter is present but bypassable.",
+                "how": "Tried alternative encodings and PHP stream wrappers: double URL-encoding (%252e%252e), null-byte injection (%00), dotdotslash variants (....//), or php://filter to encode file content as base64 and bypass open_basedir restrictions."
+            }}
+        }};
         
         function selectVulnerability() {{
             const select = document.getElementById('vulnSelect');
@@ -2146,19 +2345,19 @@ class PoCGenerator:
                 urlBox.style.display = 'none';
                 openBtn.disabled = true;
                 copyBtn.disabled = true;
+                document.getElementById('bypassBox').style.display = 'none';
                 return;
             }}
             
             const vulnIndex = parseInt(select.value);
             const vuln = vulnerabilities[vulnIndex];
             
-            // Mostrar detalles de la vulnerabilidad
-            vulnDetails.innerHTML = `
-                <div class="method-badge method-${{vuln.method.toLowerCase()}}">${{vuln.method}}</div>
-                <strong>URL:</strong> ${{vuln.url}}<br><br>
-                <strong>Payload:</strong><br>
-                <div class="payload-box">${{vuln.payload}}</div>
-            `;
+            // Mostrar detalles de la vulnerabilidad (escapados)
+            vulnDetails.innerHTML =
+                '<span class="method-badge method-' + vuln.method.toLowerCase() + '">' + escHtml(vuln.method) + '</span>' +
+                '<strong>URL:</strong> ' + escHtml(vuln.url) + '<br><br>' +
+                '<strong>Payload:</strong><br>' +
+                '<div class="payload-box">' + escHtml(vuln.payload) + '</div>';
             
             selectedUrl.textContent = vuln.url;
             
@@ -2166,6 +2365,37 @@ class PoCGenerator:
             urlBox.style.display = 'block';
             openBtn.disabled = false;
             copyBtn.disabled = false;
+
+            // ── Bypass Analysis box ────────────────────────────────────────
+            const bypassBox = document.getElementById('bypassBox');
+            const bypassBody = document.getElementById('bypassTableBody');
+            bypassBody.innerHTML = '';
+            const meta = vuln.bypass_meta || {{}};
+            if (meta.BYPASS_TECHNIQUE) {{
+                const explanation = LFI_BYPASS_EXPLANATIONS[meta.BYPASS_TECHNIQUE] || {{
+                    context: meta.BYPASS_TECHNIQUE, why: "A bypass was required.", how: "See bypass payload below."
+                }};
+                const curlCmd = buildCurl(vuln);
+                const rows = [
+                    ["Technique", escHtml(meta.BYPASS_TECHNIQUE)],
+                    ["Injection Context", escHtml(explanation.context)],
+                    ["Original probe payload", '<span class="code-inline">' + escHtml(meta.BYPASS_ORIGINAL || '—') + '</span>'],
+                    ["Winning bypass payload", '<span class="code-inline">' + escHtml(vuln.payload) + '</span>'],
+                    ["Why it works", explanation.why],
+                    ["How it was done", explanation.how],
+                    ["Reproduction (cURL)", '<div class="bypass-curl">' + escHtml(curlCmd) + '</div>'],
+                ];
+                rows.forEach(([label, val]) => {{
+                    const tr = document.createElement('tr');
+                    const td1 = document.createElement('td'); td1.textContent = label;
+                    const td2 = document.createElement('td'); td2.innerHTML = val;
+                    tr.appendChild(td1); tr.appendChild(td2);
+                    bypassBody.appendChild(tr);
+                }});
+                bypassBox.style.display = 'block';
+            }} else {{
+                bypassBox.style.display = 'none';
+            }}
         }}
         
         function openInNewTab() {{
@@ -2182,8 +2412,9 @@ class PoCGenerator:
             if (select.value !== '') {{
                 const vulnIndex = parseInt(select.value);
                 const vuln = vulnerabilities[vulnIndex];
-                navigator.clipboard.writeText(vuln.url).then(() => {{
-                    alert('URL copied to clipboard!');
+                const curlCmd = buildCurl(vuln);
+                navigator.clipboard.writeText(curlCmd).then(() => {{
+                    alert('cURL copied to clipboard!');
                 }});
             }}
         }}
@@ -2534,21 +2765,22 @@ class PoCGenerator:
     def generate_sqli_poc(self, vulnerable_urls, screenshot=False, domain=None):
         """Genera PoC para SQL Injection con múltiples URLs vulnerables"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Crear un hash único basado en las URLs para evitar sobrescribir PoCs
         import hashlib
         urls_str = '|'.join(vulnerable_urls)
         url_hash = hashlib.md5(urls_str.encode()).hexdigest()[:8]
         
-        # Extraer el dominio base de la primera URL
+        # Extraer el dominio base de la primera URL (sin metadatos)
         from urllib.parse import urlparse
         if vulnerable_urls:
-            base_domain = urlparse(vulnerable_urls[0]).netloc
+            _first_clean, _ = _parse_bypass_metadata(vulnerable_urls[0])
+            base_domain = urlparse(_first_clean).netloc
         else:
             base_domain = "unknown"
         
         # Procesar las URLs vulnerables
         vuln_data = []
-        for i, vuln_url in enumerate(vulnerable_urls):
+        for i, raw_entry in enumerate(vulnerable_urls):
+            vuln_url, bypass_meta = _parse_bypass_metadata(raw_entry)
             method = "GET"
             url = vuln_url
             payload = ""
@@ -2581,7 +2813,8 @@ class PoCGenerator:
                 'method': method,
                 'url': url,
                 'payload': payload,
-                'form_data': form_data
+                'form_data': form_data,
+                'bypass_meta': bypass_meta,
             })
         
         # Generate dropdown options
@@ -2617,6 +2850,14 @@ class PoCGenerator:
         .method-post {{ background: #e74c3c; color: white; }}
         .payload-box {{ background: #e74c3c; color: white; padding: 5px; border-radius: 3px; font-family: monospace; margin: 5px 0; }}
         .sqli-payload {{ background: #9b59b6; color: white; padding: 5px; border-radius: 3px; font-family: monospace; margin: 5px 0; }}
+        .bypass-box {{ background: white; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 5px solid #8e44ad; display: none; }}
+        .bypass-box h3 {{ color: #8e44ad; margin-top: 0; }}
+        .bypass-table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
+        .bypass-table th {{ background: #8e44ad; color: white; padding: 8px 12px; text-align: left; }}
+        .bypass-table td {{ padding: 8px 12px; border-bottom: 1px solid #eee; vertical-align: top; }}
+        .bypass-table td:first-child {{ font-weight: bold; color: #555; width: 28%; }}
+        .code-inline {{ background: #2c3e50; color: #2ecc71; padding: 2px 6px; border-radius: 3px; font-family: monospace; font-size: 13px; word-break: break-all; }}
+        .bypass-curl {{ background: #1a252f; color: #ecf0f1; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 12px; margin: 5px 0; word-break: break-all; }}
     </style>
 </head>
 <body>
@@ -2646,7 +2887,7 @@ class PoCGenerator:
     
     <div style="text-align: center; margin: 20px 0;">
         <button class="button" onclick="openInNewTab()" id="openBtn" disabled>🔗 Open in New Tab (SQLi will execute)</button>
-        <button class="button" onclick="copyUrl()" id="copyBtn" disabled>📋 Copy URL</button>
+        <button class="button" onclick="copyUrl()" id="copyBtn" disabled>📋 Copy cURL</button>
         <button class="button" onclick="showAnalysis()">🔍 Show Analysis</button>
         <button class="button" onclick="showDetails()">📊 Show Details</button>
     </div>
@@ -2685,8 +2926,58 @@ class PoCGenerator:
         </ul>
     </div>
 
+    <div id="bypassBox" class="bypass-box">
+        <h3>⚡ Bypass Analysis</h3>
+        <table class="bypass-table">
+            <thead><tr><th>Field</th><th>Details</th></tr></thead>
+            <tbody id="bypassTableBody"></tbody>
+        </table>
+    </div>
+
     <script>
         const vulnerabilities = {json.dumps(vuln_data)};
+
+        function escHtml(str) {{
+            return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        }}
+
+        function buildCurl(vuln) {{
+            if (!vuln) return '';
+            if (vuln.method === 'POST' && vuln.form_data && Object.keys(vuln.form_data).length > 0) {{
+                const parts = [];
+                for (const [n, v] of Object.entries(vuln.form_data))
+                    parts.push(encodeURIComponent(n) + '=' + encodeURIComponent(v));
+                return "curl -sk -X POST '" + vuln.url + "' --data '" + parts.join('&') + "'";
+            }}
+            return "curl -sk '" + vuln.url + "'";
+        }}
+
+        const SQLI_BYPASS_EXPLANATIONS = {{
+            "BOOLEAN-BASED": {{
+                "context": "Boolean-Based Blind SQL Injection",
+                "why": "No SQL error is returned, but the application responds differently to logically true vs. false conditions (e.g. AND 1=1 vs AND 1=2). This reveals injectable parameters without explicit error messages.",
+                "how": "Compare response length/content: true condition returns normal page, false condition returns shorter/different page (>20% difference detected)."
+            }},
+            "TIME-BASED": {{
+                "context": "Time-Based Blind SQL Injection",
+                "why": "The application does not reflect any SQL error or boolean difference, but a SLEEP/WAITFOR DELAY payload causes a measurable delay (≥3 seconds), confirming the injection point.",
+                "how": "Payload triggers a DB-level sleep function. Measured response time exceeded the threshold, confirming code execution inside the query."
+            }},
+            "WAF-BYPASS": {{
+                "context": "WAF-Bypassed SQL Injection",
+                "why": "The standard payload was blocked (HTTP 403/406/429). A bypass payload using comment injection (/**/), URL encoding (%27), or case mixing evaded the WAF filter.",
+                "how": "Payload obfuscation: spaces replaced with /**/, OR written as /*!OR*/, quotes as %27, or inline comment insertion between keywords."
+            }}
+        }};
+
+        function _sqliGetBypassExplanation(technique) {{
+            if (!technique) return null;
+            for (const key of Object.keys(SQLI_BYPASS_EXPLANATIONS)) {{
+                if (technique.includes(key)) return SQLI_BYPASS_EXPLANATIONS[key];
+            }}
+            return {{ context: technique, why: "A bypass technique was required to confirm the injection.", how: "See bypass payload below." }};
+        }}
         
         function selectVulnerability() {{
             const select = document.getElementById('vulnSelect');
@@ -2702,19 +2993,19 @@ class PoCGenerator:
                 urlBox.style.display = 'none';
                 openBtn.disabled = true;
                 copyBtn.disabled = true;
+                document.getElementById('bypassBox').style.display = 'none';
                 return;
             }}
             
             const vulnIndex = parseInt(select.value);
             const vuln = vulnerabilities[vulnIndex];
             
-            // Mostrar detalles de la vulnerabilidad
-            vulnDetails.innerHTML = `
-                <div class="method-badge method-${{vuln.method.toLowerCase()}}">${{vuln.method}}</div>
-                <strong>URL:</strong> ${{vuln.url}}<br><br>
-                <strong>Payload:</strong><br>
-                <div class="payload-box">${{vuln.payload}}</div>
-            `;
+            // Mostrar detalles de la vulnerabilidad (escapados)
+            vulnDetails.innerHTML =
+                '<span class="method-badge method-' + vuln.method.toLowerCase() + '">' + escHtml(vuln.method) + '</span>' +
+                '<strong>URL:</strong> ' + escHtml(vuln.url) + '<br><br>' +
+                '<strong>Payload:</strong><br>' +
+                '<div class="payload-box">' + escHtml(vuln.payload) + '</div>';
             
             selectedUrl.textContent = vuln.url;
             
@@ -2722,6 +3013,35 @@ class PoCGenerator:
             urlBox.style.display = 'block';
             openBtn.disabled = false;
             copyBtn.disabled = false;
+
+            // ── Bypass Analysis box ────────────────────────────────────────
+            const bypassBox = document.getElementById('bypassBox');
+            const bypassBody = document.getElementById('bypassTableBody');
+            bypassBody.innerHTML = '';
+            const meta = vuln.bypass_meta || {{}};
+            if (meta.BYPASS_TECHNIQUE) {{
+                const explanation = _sqliGetBypassExplanation(meta.BYPASS_TECHNIQUE);
+                const curlCmd = buildCurl(vuln);
+                const rows = [
+                    ["Technique", escHtml(meta.BYPASS_TECHNIQUE)],
+                    ["Injection Context", explanation ? escHtml(explanation.context) : '—'],
+                    ["Original probe payload", '<span class="code-inline">' + escHtml(meta.BYPASS_ORIGINAL || '—') + '</span>'],
+                    ["Winning bypass payload", '<span class="code-inline">' + escHtml(vuln.payload) + '</span>'],
+                    ["Why it works", explanation ? explanation.why : '—'],
+                    ["How it was done", explanation ? explanation.how : '—'],
+                    ["Reproduction (cURL)", '<div class="bypass-curl">' + escHtml(curlCmd) + '</div>'],
+                ];
+                rows.forEach(([label, val]) => {{
+                    const tr = document.createElement('tr');
+                    const td1 = document.createElement('td'); td1.textContent = label;
+                    const td2 = document.createElement('td'); td2.innerHTML = val;
+                    tr.appendChild(td1); tr.appendChild(td2);
+                    bypassBody.appendChild(tr);
+                }});
+                bypassBox.style.display = 'block';
+            }} else {{
+                bypassBox.style.display = 'none';
+            }}
         }}
         
         function openInNewTab() {{
@@ -3028,17 +3348,44 @@ class PoCGenerator:
         # Acepta tanto una lista de URLs como una URL individual
         if isinstance(target_url, list):
             vulnerable_urls = target_url
-            target_url = target_url[0] if target_url else ""
+            raw_first = target_url[0] if target_url else ""
         else:
             vulnerable_urls = [target_url] if target_url else []
+            raw_first = target_url
 
-        if not target_url:
+        if not raw_first:
             return {'html_filename': None}
 
+        # Parsear metadatos de bypass del primer entry
+        target_url, rce_bypass_meta = _parse_bypass_metadata(raw_first)
+
+        # Limpiar también el resto de entries de la lista para el hashlib
+        vulnerable_urls = [_parse_bypass_metadata(u)[0] for u in vulnerable_urls]
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        import hashlib
+        import hashlib, json as _json_rce
         url_hash = hashlib.md5(target_url.encode()).hexdigest()[:8]
-        
+
+        # Construir bloque bypass analysis HTML
+        _rce_bypass_section = ""
+        if rce_bypass_meta.get("BYPASS_TECHNIQUE"):
+            _btech = html.escape(rce_bypass_meta.get("BYPASS_TECHNIQUE", ""))
+            _borig = html.escape(rce_bypass_meta.get("BYPASS_ORIGINAL", "—"))
+            _rce_bypass_section = f"""
+    <div id="bypassBox" style="background:white;padding:15px;margin:15px 0;border-radius:5px;border-left:5px solid #8e44ad;">
+        <h3 style="color:#8e44ad;margin-top:0;">&#9889; Bypass Analysis</h3>
+        <table style="width:100%;border-collapse:collapse;font-size:14px;">
+            <thead><tr><th style="background:#8e44ad;color:white;padding:8px 12px;text-align:left;">Field</th><th style="background:#8e44ad;color:white;padding:8px 12px;text-align:left;">Details</th></tr></thead>
+            <tbody>
+                <tr><td style="font-weight:bold;color:#555;padding:8px 12px;border-bottom:1px solid #eee;width:28%;">Technique</td><td style="padding:8px 12px;border-bottom:1px solid #eee;">{_btech}</td></tr>
+                <tr><td style="font-weight:bold;color:#555;padding:8px 12px;border-bottom:1px solid #eee;">Injection Context</td><td style="padding:8px 12px;border-bottom:1px solid #eee;">Command Injection Bypass — filter/WAF evasion required</td></tr>
+                <tr><td style="font-weight:bold;color:#555;padding:8px 12px;border-bottom:1px solid #eee;">Original probe payload</td><td style="padding:8px 12px;border-bottom:1px solid #eee;"><code style="background:#2c3e50;color:#2ecc71;padding:2px 6px;border-radius:3px;font-family:monospace;word-break:break-all;">{_borig}</code></td></tr>
+                <tr><td style="font-weight:bold;color:#555;padding:8px 12px;border-bottom:1px solid #eee;">Why it works</td><td style="padding:8px 12px;border-bottom:1px solid #eee;">Standard pipe/semicolon injections were filtered or sanitized. The bypass payload uses an alternative shell metacharacter or encoding (${{IFS}} for space bypass, %0a for newline injection, backtick or $() for subshell) that evades the input validation pattern.</td></tr>
+                <tr><td style="font-weight:bold;color:#555;padding:8px 12px;border-bottom:1px solid #eee;">How it was done</td><td style="padding:8px 12px;border-bottom:1px solid #eee;">Alternative shell metacharacters: ${{IFS}} (space substitute), newline injection (%0a), subshell operators ($(), backtick), glob patterns, or base64-encoded commands piped to bash.</td></tr>
+            </tbody>
+        </table>
+    </div>"""
+
         html_content = f"""
 <!DOCTYPE html>
 <html>
@@ -3058,6 +3405,7 @@ class PoCGenerator:
         <p>Target: <strong>{html.escape(target_url)}</strong></p>
         <p>Method: <strong>{method}</strong></p>
     </div>
+    {_rce_bypass_section}
     
     <div class="url-box">
         <strong>Vulnerable URL:</strong><br>
@@ -3080,13 +3428,13 @@ class PoCGenerator:
         </select>
         <div id="selectedPayload" style="background: #e74c3c; color: white; padding: 5px; margin: 5px 0; border-radius: 3px; font-family: monospace; word-break: break-all;">
             <strong>Method:</strong> {method}<br>
-            <strong>URL:</strong> {target_url.replace('PAYLOAD_PLACEHOLDER', '| ifconfig')}
+            <strong>URL:</strong> {html.escape(target_url.replace('PAYLOAD_PLACEHOLDER', '| ifconfig'))}
         </div>
     </div>
     
     <button class="button" onclick="openInNewTab()">🔗 Open in New Tab</button>
-    <button class="button" onclick="copyUrl()">📋 Copy URL</button>
-    <button class="button" onclick="copyPayload()">📋 Copy Payload</button>
+    <button class="button" onclick="copyCurl()">📋 Copy cURL</button>
+    <button class="button" onclick="copyPayload()">📋 Copy URL</button>
     <button class="button" onclick="showAnalysis()">🔍 Show Analysis</button>
     <button class="button" onclick="showDetails()">📊 Show Details</button>
     
@@ -3136,10 +3484,33 @@ class PoCGenerator:
     </div>
     
     <script>
+        function escHtml(str) {{
+            return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        }}
+
         function updatePayload() {{
             const select = document.getElementById('payloadSelect');
             const display = document.getElementById('selectedPayload');
-            display.innerHTML = '<strong>Method:</strong> {method}<br><strong>URL:</strong> ' + select.value;
+            display.innerHTML = '<strong>Method:</strong> {method}<br><strong>URL:</strong> ' + escHtml(select.value);
+        }}
+
+        function copyCurl() {{
+            const select = document.getElementById('payloadSelect');
+            const curlCmd = "curl -sk '" + select.value + "'";
+            navigator.clipboard.writeText(curlCmd).then(function() {{
+                const btn = event.target;
+                const orig = btn.textContent;
+                btn.textContent = '✅ Copied!';
+                setTimeout(() => {{ btn.textContent = orig; }}, 2000);
+            }}).catch(function() {{
+                const ta = document.createElement('textarea');
+                ta.value = curlCmd;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+            }});
         }}
         
         function copyPayload() {{
@@ -3522,7 +3893,7 @@ class PoCGenerator:
         <div>
             <button class="button" onclick="testSSRF()">🧪 Test SSRF</button>
             <button class="button" onclick="openInNewTab()">🔗 Open in New Tab</button>
-            <button class="button" onclick="copyUrl()">📋 Copy URL</button>
+            <button class="button" onclick="copyCurl()">📋 Copy cURL</button>
             <button class="button" onclick="showAnalysis()">🔍 Show Analysis</button>
             <button class="button" onclick="showDetails()">📊 Show Details</button>
         </div>
@@ -3609,21 +3980,23 @@ class PoCGenerator:
             }}
         }}
         
-        function copyUrl() {{
+        function copyCurl() {{
             const payloadSelect = document.getElementById('payloadSelect');
             const url = payloadSelect.value || document.getElementById('currentUrl').textContent;
-            
-            navigator.clipboard.writeText(url).then(function() {{
-                alert('✅ URL copied to clipboard!');
-            }}).catch(function(err) {{
-                console.error('Error copying URL: ', err);
-                const textArea = document.createElement('textarea');
-                textArea.value = url;
-                document.body.appendChild(textArea);
-                textArea.select();
+            const curlCmd = "curl -sk '" + url + "'";
+            navigator.clipboard.writeText(curlCmd).then(function() {{
+                const btn = event.target;
+                const orig = btn.textContent;
+                btn.textContent = '✅ Copied!';
+                setTimeout(() => {{ btn.textContent = orig; }}, 2000);
+            }}).catch(function() {{
+                const ta = document.createElement('textarea');
+                ta.value = curlCmd;
+                document.body.appendChild(ta);
+                ta.select();
                 document.execCommand('copy');
-                document.body.removeChild(textArea);
-                alert('✅ URL copied to clipboard!');
+                document.body.removeChild(ta);
+                alert('✅ cURL copied!');
             }});
         }}
         
@@ -3711,21 +4084,22 @@ class PoCGenerator:
     def generate_ssti_poc(self, vulnerable_urls, screenshot=False, domain=None):
         """Genera PoC para SSTI con múltiples URLs vulnerables"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Crear un hash único basado en las URLs para evitar sobrescribir PoCs
         import hashlib
         urls_str = '|'.join(vulnerable_urls)
         url_hash = hashlib.md5(urls_str.encode()).hexdigest()[:8]
         
-        # Extraer el dominio base de la primera URL
+        # Extraer el dominio base de la primera URL (sin metadatos)
         from urllib.parse import urlparse
         if vulnerable_urls:
-            base_domain = urlparse(vulnerable_urls[0]).netloc
+            _first_clean, _ = _parse_bypass_metadata(vulnerable_urls[0])
+            base_domain = urlparse(_first_clean).netloc
         else:
             base_domain = "unknown"
         
         # Procesar las URLs vulnerables
         vuln_data = []
-        for i, vuln_url in enumerate(vulnerable_urls):
+        for i, raw_entry in enumerate(vulnerable_urls):
+            vuln_url, bypass_meta = _parse_bypass_metadata(raw_entry)
             method = "GET"
             url = vuln_url
             payload = ""
@@ -3758,7 +4132,8 @@ class PoCGenerator:
                 'method': method,
                 'url': url,
                 'payload': payload,
-                'form_data': form_data
+                'form_data': form_data,
+                'bypass_meta': bypass_meta,
             })
         
         # Generate dropdown options
@@ -3794,6 +4169,14 @@ class PoCGenerator:
         .method-post {{ background: #e74c3c; color: white; }}
         .payload-box {{ background: #e74c3c; color: white; padding: 5px; border-radius: 3px; font-family: monospace; margin: 5px 0; }}
         .ssti-payload {{ background: #9b59b6; color: white; padding: 5px; border-radius: 3px; font-family: monospace; margin: 5px 0; }}
+        .bypass-box {{ background: white; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 5px solid #8e44ad; display: none; }}
+        .bypass-box h3 {{ color: #8e44ad; margin-top: 0; }}
+        .bypass-table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
+        .bypass-table th {{ background: #8e44ad; color: white; padding: 8px 12px; text-align: left; }}
+        .bypass-table td {{ padding: 8px 12px; border-bottom: 1px solid #eee; vertical-align: top; }}
+        .bypass-table td:first-child {{ font-weight: bold; color: #555; width: 28%; }}
+        .code-inline {{ background: #2c3e50; color: #2ecc71; padding: 2px 6px; border-radius: 3px; font-family: monospace; font-size: 13px; word-break: break-all; }}
+        .bypass-curl {{ background: #1a252f; color: #ecf0f1; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 12px; margin: 5px 0; word-break: break-all; }}
     </style>
 </head>
 <body>
@@ -3823,7 +4206,7 @@ class PoCGenerator:
     
     <div style="text-align: center; margin: 20px 0;">
         <button class="button" onclick="openInNewTab()" id="openBtn" disabled>🔗 Open in New Tab (SSTI will execute)</button>
-        <button class="button" onclick="copyUrl()" id="copyBtn" disabled>📋 Copy URL</button>
+        <button class="button" onclick="copyUrl()" id="copyBtn" disabled>📋 Copy cURL</button>
         <button class="button" onclick="showAnalysis()">🔍 Show Analysis</button>
         <button class="button" onclick="showDetails()">📊 Show Details</button>
     </div>
@@ -3868,8 +4251,42 @@ class PoCGenerator:
         </ul>
     </div>
 
+    <div id="bypassBox" class="bypass-box">
+        <h3>⚡ Bypass Analysis</h3>
+        <table class="bypass-table">
+            <thead><tr><th>Field</th><th>Details</th></tr></thead>
+            <tbody id="bypassTableBody"></tbody>
+        </table>
+    </div>
+
     <script>
         const vulnerabilities = {json.dumps(vuln_data)};
+
+        function escHtml(str) {{
+            return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        }}
+
+        function buildCurl(vuln) {{
+            if (!vuln) return '';
+            if (vuln.method === 'POST' && vuln.form_data && Object.keys(vuln.form_data).length > 0) {{
+                const parts = [];
+                for (const [n, v] of Object.entries(vuln.form_data))
+                    parts.push(encodeURIComponent(n) + '=' + encodeURIComponent(v));
+                return "curl -sk -X POST '" + vuln.url + "' --data '" + parts.join('&') + "'";
+            }}
+            return "curl -sk '" + vuln.url + "'";
+        }}
+
+        const SSTI_ENGINE_DESCRIPTIONS = {{
+            "jinja2": "Jinja2 (Python/Flask/Django) — Python object model accessible via template globals.",
+            "twig": "Twig (PHP/Symfony) — sandbox escapes via _self.env or registerUndefinedFilterCallback.",
+            "freemarker": "FreeMarker (Java) — Execute?new() allows Java reflection and code execution.",
+            "thymeleaf": "Thymeleaf (Java/Spring) — SpEL expressions allow T(java.lang.Runtime).exec().",
+            "smarty": "Smarty (PHP) — {{{{php}}}} tags or {{{{system()}}}} in older versions allow RCE.",
+            "velocity": "Apache Velocity (Java) — #set + Runtime.exec() chain allows RCE.",
+            "unknown": "Unknown engine — math probe (7*7=49) confirmed server-side evaluation."
+        }};
         
         function selectVulnerability() {{
             const select = document.getElementById('vulnSelect');
@@ -3885,19 +4302,19 @@ class PoCGenerator:
                 urlBox.style.display = 'none';
                 openBtn.disabled = true;
                 copyBtn.disabled = true;
+                document.getElementById('bypassBox').style.display = 'none';
                 return;
             }}
             
             const vulnIndex = parseInt(select.value);
             const vuln = vulnerabilities[vulnIndex];
             
-            // Mostrar detalles de la vulnerabilidad
-            vulnDetails.innerHTML = `
-                <div class="method-badge method-${{vuln.method.toLowerCase()}}">${{vuln.method}}</div>
-                <strong>URL:</strong> ${{vuln.url}}<br><br>
-                <strong>Payload:</strong><br>
-                <div class="payload-box">${{vuln.payload}}</div>
-            `;
+            // Mostrar detalles de la vulnerabilidad (escapados)
+            vulnDetails.innerHTML =
+                '<span class="method-badge method-' + vuln.method.toLowerCase() + '">' + escHtml(vuln.method) + '</span>' +
+                '<strong>URL:</strong> ' + escHtml(vuln.url) + '<br><br>' +
+                '<strong>Payload:</strong><br>' +
+                '<div class="payload-box">' + escHtml(vuln.payload) + '</div>';
             
             selectedUrl.textContent = vuln.url;
             
@@ -3905,6 +4322,38 @@ class PoCGenerator:
             urlBox.style.display = 'block';
             openBtn.disabled = false;
             copyBtn.disabled = false;
+
+            // ── Bypass Analysis box (SSTI engine + RCE) ───────────────────
+            const bypassBox = document.getElementById('bypassBox');
+            const bypassBody = document.getElementById('bypassTableBody');
+            bypassBody.innerHTML = '';
+            const meta = vuln.bypass_meta || {{}};
+            if (meta.SSTI_ENGINE) {{
+                const engineDesc = SSTI_ENGINE_DESCRIPTIONS[meta.SSTI_ENGINE.toLowerCase()] ||
+                    ('Detected engine: ' + meta.SSTI_ENGINE);
+                const curlCmd = buildCurl(vuln);
+                const rows = [
+                    ["Template Engine", '<span class="code-inline">' + escHtml(meta.SSTI_ENGINE) + '</span>'],
+                    ["Engine Details", engineDesc],
+                    ["Detection Method", "Math expression probe: {{7*7}} returned 49, confirming server-side template evaluation."],
+                    ["Injection Payload", '<span class="code-inline">' + escHtml(vuln.payload) + '</span>'],
+                    ["RCE Confirmed", meta.SSTI_RCE
+                        ? '<span style="color:#e74c3c;font-weight:bold;">YES</span> — Output: <span class="code-inline">' + escHtml(meta.SSTI_RCE) + '</span>'
+                        : '<span style="color:#e67e22;">Template evaluated, RCE not confirmed</span>'],
+                    ["Why it works", "The application passes user-controlled input directly to the template engine renderer without sanitization. The engine evaluates math and object-access expressions, which can escalate to full OS command execution."],
+                    ["Reproduction (cURL)", '<div class="bypass-curl">' + escHtml(curlCmd) + '</div>'],
+                ];
+                rows.forEach(([label, val]) => {{
+                    const tr = document.createElement('tr');
+                    const td1 = document.createElement('td'); td1.textContent = label;
+                    const td2 = document.createElement('td'); td2.innerHTML = val;
+                    tr.appendChild(td1); tr.appendChild(td2);
+                    bypassBody.appendChild(tr);
+                }});
+                bypassBox.style.display = 'block';
+            }} else {{
+                bypassBox.style.display = 'none';
+            }}
         }}
         
         function openInNewTab() {{
@@ -3921,8 +4370,9 @@ class PoCGenerator:
             if (select.value !== '') {{
                 const vulnIndex = parseInt(select.value);
                 const vuln = vulnerabilities[vulnIndex];
-                navigator.clipboard.writeText(vuln.url).then(() => {{
-                    alert('URL copied to clipboard!');
+                const curlCmd = buildCurl(vuln);
+                navigator.clipboard.writeText(curlCmd).then(() => {{
+                    alert('cURL copied to clipboard!');
                 }});
             }}
         }}
@@ -4102,7 +4552,7 @@ class PoCGenerator:
     
     <div style="text-align: center; margin: 20px 0;">
         <button class="button" onclick="openInNewTab()" id="openBtn" disabled>🔗 Open in New Tab (Redirect will execute)</button>
-        <button class="button" onclick="copyUrl()" id="copyBtn" disabled>📋 Copy URL</button>
+        <button class="button" onclick="copyCurl()" id="copyBtn" disabled>📋 Copy cURL</button>
         <button class="button" onclick="showAnalysis()">🔍 Show Analysis</button>
         <button class="button" onclick="showDetails()">📊 Show Details</button>
     </div>
@@ -4199,15 +4649,24 @@ class PoCGenerator:
             }}
         }}
         
-        function copyUrl() {{
+        function copyCurl() {{
             const select = document.getElementById('vulnSelect');
-            if (select.value !== '') {{
-                const vulnIndex = parseInt(select.value);
-                const vuln = vulnerabilities[vulnIndex];
-                navigator.clipboard.writeText(vuln.url).then(() => {{
-                    alert('URL copied to clipboard!');
-                }});
-            }}
+            if (select.value === '') return;
+            const vuln = vulnerabilities[parseInt(select.value)];
+            const curlCmd = "curl -sk -L -v '" + vuln.url + "' 2>&1 | grep -E 'Location|< HTTP'";
+            navigator.clipboard.writeText(curlCmd).then(() => {{
+                const btn = event.target;
+                const orig = btn.textContent;
+                btn.textContent = '✅ Copied!';
+                setTimeout(() => {{ btn.textContent = orig; }}, 2000);
+            }}).catch(() => {{
+                const ta = document.createElement('textarea');
+                ta.value = curlCmd;
+                document.body.appendChild(ta); ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                alert('cURL copied!');
+            }});
         }}
         
         function showAnalysis() {{
@@ -4366,15 +4825,25 @@ class PoCGenerator:
             document.body.removeChild(form);
         }}
         
-        function copyUrl() {{
+        function copyCurl() {{
             const select = document.getElementById('vulnSelect');
             if (select.value === '') return;
-            
-            const vulnIndex = parseInt(select.value);
-            const selectedVuln = vulnerabilities[vulnIndex];
-            
-            navigator.clipboard.writeText(selectedVuln.url).then(() => {{
-                alert('URL copied to clipboard!');
+            const vuln = vulnerabilities[parseInt(select.value)];
+            // XXE requiere POST con Content-Type: application/xml y el payload en el body
+            const xmlPayload = vuln.payload.replace(/'/g, "'\''");
+            const curlCmd = "curl -sk -X POST -H 'Content-Type: application/xml' --data-binary '" + xmlPayload + "' '" + vuln.url + "'";
+            navigator.clipboard.writeText(curlCmd).then(() => {{
+                const btn = event.target;
+                const orig = btn.textContent;
+                btn.textContent = '✅ Copied!';
+                setTimeout(() => {{ btn.textContent = orig; }}, 2000);
+            }}).catch(() => {{
+                const ta = document.createElement('textarea');
+                ta.value = curlCmd;
+                document.body.appendChild(ta); ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                alert('cURL copied!');
             }});
         }}
     </script>
