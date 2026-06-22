@@ -483,7 +483,13 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
     found = 0
     lock = threading.Lock()
     vuln_set = set()
-    
+
+    try:
+        from scanners.ban_detector import get_ban_detector
+    except ImportError:
+        from ban_detector import get_ban_detector
+    ban = get_ban_detector()
+
     # Cache para baselines y endpoints vulnerables
     baseline_cache = {}
     form_cache = {}
@@ -542,10 +548,18 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
                 continue
 
             # Probar payload XSS
+            domain = parsed.netloc
+            if ban.is_banned(domain):
+                with lock:
+                    current += 1
+                    update_progress(current, total)
+                return
+
             data = {p: "TEST123" for p in qs}
             data[param] = payload
             try:
                 r = session.get(base_url, params=data, verify=False, timeout=5, allow_redirects=True)
+                ban.record(domain, r.status_code, r, base_url)
 
                 def _report_xss_get(winning_payload, method_label="GET"):
                     """Reporta XSS confirmado y termina el loop."""
@@ -644,10 +658,17 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
                 continue
 
             # Probar payload XSS
+            if ban.is_banned(domain):
+                with lock:
+                    current += 1
+                    update_progress(current, total)
+                return
+
             data = {p: "TEST123" for p in qs}
             data[param] = payload
             try:
                 r = session.post(base_url, data=data, verify=False, timeout=5, allow_redirects=True)
+                ban.record(domain, r.status_code, r, base_url)
 
                 def _report_xss_post(winning_payload, method_label="POST"):
                     if not vuln_manager.is_already_exploited(base_url, param):
@@ -788,10 +809,15 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
                 if not baseline:
                     continue
 
+                form_domain = urlparse(full_url).netloc
+                if ban.is_banned(form_domain):
+                    continue
+
                 if method == "post":
                     res = session.post(full_url, data=data, timeout=5)
                 else:
                     res = session.get(full_url, params=data, timeout=5)
+                ban.record(form_domain, res.status_code, res, full_url)
 
                 def _report_xss_form(winning_payload, winning_data, label="FORM"):
                     key = f"{norm_url}|{','.join(sorted(winning_data.keys()))}|{winning_payload}"

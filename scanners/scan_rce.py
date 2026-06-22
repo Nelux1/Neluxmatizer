@@ -148,7 +148,13 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
     found = []
     lock = threading.Lock()
     vulnerable_endpoints = set()
-    
+
+    try:
+        from scanners.ban_detector import get_ban_detector
+    except ImportError:
+        from ban_detector import get_ban_detector
+    ban = get_ban_detector()
+
     # Cache para baselines y endpoints vulnerables
     baseline_cache = {}
     form_cache = {}
@@ -206,9 +212,17 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
                 baseline_cache[baseline_key] = get_baseline_response("get", base_url, data)
             baseline = baseline_cache[baseline_key]
 
+            _rce_domain = parsed.netloc
+            if ban.is_banned(_rce_domain):
+                with lock:
+                    current += 1
+                    update_progress(current, total_tasks)
+                return
+
             try:
                 r = requests.get(base_url, params=data, headers=headers, verify=False, timeout=5)
-                
+                ban.record(_rce_domain, r.status_code, r, base_url)
+
                 # Determinar si hay evidencia de RCE real
                 has_real_output = is_rce_response(r.text)
                 # Echo marker: solo válido si el parámetro NO refleja el marcador como valor plano
@@ -298,9 +312,16 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
                 baseline_cache[baseline_key] = get_baseline_response("post", base_url, data)
             baseline = baseline_cache[baseline_key]
 
+            if ban.is_banned(parsed.netloc):
+                with lock:
+                    current += 1
+                    update_progress(current, total_tasks)
+                return
+
             try:
                 r = requests.post(base_url, data=data, headers=headers, verify=False, timeout=5)
-                
+                ban.record(parsed.netloc, r.status_code, r, base_url)
+
                 has_real_output = is_rce_response(r.text)
                 has_echo_marker = _RCE_ECHO_MARKER in r.text
                 if has_echo_marker and not has_real_output:

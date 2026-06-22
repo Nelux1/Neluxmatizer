@@ -235,7 +235,13 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
     current = 0
     lock = threading.Lock()
     vulnerable_endpoints = set()
-    
+
+    try:
+        from scanners.ban_detector import get_ban_detector
+    except ImportError:
+        from ban_detector import get_ban_detector
+    ban = get_ban_detector()
+
     # Cache para baselines y endpoints vulnerables
     baseline_cache = {}
     form_cache = {}
@@ -301,8 +307,16 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                 baseline_cache[baseline_key] = get_baseline_response("get", base_url, data)
             baseline = baseline_cache[baseline_key]
             
+            _sqli_domain = parsed.netloc
+            if ban.is_banned(_sqli_domain):
+                with lock:
+                    current += 1
+                    update_progress(current, total_tasks)
+                return
+
             try:
                 r = requests.get(base_url, params=data, headers=headers, verify=False, timeout=5)
+                ban.record(_sqli_domain, r.status_code, r, base_url)
 
                 def _report_sqli_get(win_payload, technique="ERROR-BASED"):
                     if vuln_manager.is_already_exploited(base_url, param):
@@ -408,9 +422,16 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                 baseline_cache[baseline_key] = get_baseline_response("post", base_url, data)
             baseline = baseline_cache[baseline_key]
 
+            if ban.is_banned(parsed.netloc):
+                with lock:
+                    current += 1
+                    update_progress(current, total_tasks)
+                return
+
             try:
                 ph = get_headers(random_agent=random_agent, custom_headers=custom_headers)
                 r = requests.post(base_url, data=data, headers=ph, verify=False, timeout=5)
+                ban.record(parsed.netloc, r.status_code, r, base_url)
 
                 def _report_sqli_post(win_payload, technique="ERROR-BASED"):
                     if vuln_manager.is_already_exploited(base_url, param):

@@ -11,6 +11,7 @@ from scanners.scan_cors import cors
 from scanners.scan_xss import xss
 from scanners.scan_sqli import sqli
 from scanners.scan_rce import rce
+from scanners.ban_detector import get_ban_detector
 from parametizer.params import parametizer
 from parametizer.progress import fmt_line, spinner_lock
 from parametizer.params_p import parametizer_params
@@ -409,7 +410,31 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             + "\n"
         )
         sys.stdout.flush()
-        
+
+        # ── IP BAN PRE-CHECK ────────────────────────────────────────────────
+        # Before attacking, verify our IP is not already blocked by the target.
+        _ban = get_ban_detector()
+        if _ban.pre_check(u):
+            # IP is banned. If scanning a list, skip to the next URL.
+            # If this is the only URL, exit with a clear message.
+            if total_urls > 1:
+                sys.stdout.write(
+                    f"\033[1;33m[!] Skipping {scope_label} — IP already blocked. "
+                    f"Moving to next target.\033[0m\n\n"
+                )
+                sys.stdout.flush()
+                save_checkpoint_for_url(u)
+                continue
+            else:
+                sys.stdout.write(
+                    f"\033[1;31m[!] Aborting scan: your IP is blocked on {scope_label}. "
+                    f"No further requests will be sent. "
+                    f"Try rotating your IP or using a proxy before retrying.\033[0m\n"
+                )
+                sys.stdout.flush()
+                sys.exit(1)
+        # ────────────────────────────────────────────────────────────────────
+
         # 🔐 AUTHENTICATION MANAGEMENT
         auth_manager = None
         if cookies or auth_token:

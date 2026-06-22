@@ -164,7 +164,13 @@ def lfi(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
     current = 0
     lock = Lock()
     found = set()
-    
+
+    try:
+        from scanners.ban_detector import get_ban_detector
+    except ImportError:
+        from ban_detector import get_ban_detector
+    ban = get_ban_detector()
+
     # Cache para baselines y formularios
     baseline_cache = {}
     form_cache = {}
@@ -207,14 +213,21 @@ def lfi(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
             if baseline_key not in baseline_cache:
                 baseline_cache[baseline_key] = get_baseline_response(method, base_url, data, custom_headers, random_agent)
 
+            _lfi_domain = parsed.netloc
+            if ban.is_banned(_lfi_domain):
+                with lock:
+                    current += 1
+                    update_progress(current, total_tasks)
+                return
+
             try:
-                # Timeout más corto para GET requests
                 timeout = 5 if method == "get" else 8
-                
+
                 if method == "post":
                     r = requests.post(base_url, data=data, headers=headers, verify=False, timeout=timeout)
                 else:
                     r = requests.get(base_url, params=data, headers=headers, verify=False, timeout=timeout)
+                ban.record(_lfi_domain, r.status_code, r, base_url)
 
                 baseline = baseline_cache[baseline_key]
 

@@ -125,6 +125,12 @@ def xxe(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
     baseline_cache = {}
     stdout_lock = Lock()
 
+    try:
+        from scanners.ban_detector import get_ban_detector
+    except ImportError:
+        from ban_detector import get_ban_detector
+    ban = get_ban_detector()
+
     def _report_vuln(endpoint, vuln_type, risk_level, payload, label="POST"):
         nonlocal found
         with lock:
@@ -145,6 +151,9 @@ def xxe(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
         try:
             parsed = urlparse(url)
             base = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+            if ban.is_banned(parsed.netloc):
+                return  # finally incrementa current
 
             with lock:
                 if base in vulnerable_endpoints:
@@ -171,6 +180,7 @@ def xxe(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
                 return  # finally incrementa current
 
             res = requests.post(base, data=payload, headers=headers, timeout=5, verify=False)
+            ban.record(parsed.netloc, res.status_code, res, base)
 
             is_vulnerable, vuln_type, risk_level = is_xxe_response(res.text, payload)
             if (
