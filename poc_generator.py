@@ -42,6 +42,23 @@ def _parse_bypass_metadata(url_entry: str) -> tuple:
     return clean, meta
 
 
+def _extract_header_injection(vuln_url: str, bypass_meta: dict) -> dict | None:
+    """
+    Detecta si la entrada corresponde a header injection (param __header_X-Forwarded-For__).
+    Retorna dict con {header_name, header_value, base_url} o None si no aplica.
+    """
+    from urllib.parse import urlparse, parse_qs, unquote
+    parsed = urlparse(vuln_url)
+    qs = parse_qs(parsed.query)
+    for key in qs:
+        if key.startswith("__header_") and key.endswith("__"):
+            header_name = key[9:-2]   # strip __header_ prefix and __ suffix
+            header_value = unquote(qs[key][0])
+            base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+            return {"header_name": header_name, "header_value": header_value, "base_url": base_url}
+    return None
+
+
 class PoCGenerator:
     def __init__(self, output_dir="output", max_workers=4, screenshot_timeout=30):
         """Inicializa el generador de PoCs"""
@@ -1751,7 +1768,15 @@ class PoCGenerator:
                 from urllib.parse import urlparse as _up
                 _p = _up(vuln_url)
                 url = f"{_p.scheme}://{_p.netloc}{_p.path}"
-            
+
+            # Detectar header injection (__header_X-Forwarded-For__=payload)
+            _hdr_info = _extract_header_injection(vuln_url, bypass_meta)
+            if _hdr_info:
+                method = "HEADER-GET"
+                url = _hdr_info["base_url"]
+                payload = _hdr_info["header_value"]
+                json_field = _hdr_info["header_name"]   # reutilizamos json_field para header name
+
             # Codificar payload en base64 para evitar ejecución en el PoC HTML
             import base64
             encoded_payload = base64.b64encode(payload.encode('utf-8')).decode('utf-8')
@@ -1931,8 +1956,15 @@ class PoCGenerator:
             "how": "Encoding tricks (&#x3c;script&#x3e;), Unicode escapes, mixed case, comment insertion, or null-byte injection."
         }};
 
+        const HEADER_XSS_EXPLANATION = {{
+            "context": "HTTP Header Injection — Reflected XSS",
+            "why": "The application reflects the value of an HTTP request header (User-Agent, Referer, X-Forwarded-For, etc.) directly into the HTML response without sanitization. Headers are often ignored by WAFs and input validators that only inspect query parameters and body fields.",
+            "how": "Send the XSS payload as the value of the injectable header (e.g. -H 'User-Agent: &lt;script&gt;alert(1)&lt;/script&gt;'). The server renders it into the page, triggering execution in the victim's browser."
+        }};
+
         function _xssGetBypassExplanation(technique) {{
             if (!technique) return null;
+            if (/HEADER-XSS/i.test(technique)) return HEADER_XSS_EXPLANATION;
             // GET-BYPASS[js_string] or FORM-BYPASS[html_attr] or GET-WAF-BYPASS[cloudflare]
             const wafMatch = technique.match(/WAF-BYPASS/i);
             if (wafMatch) return WAF_BYPASS_EXPLANATION;
@@ -2074,6 +2106,10 @@ class PoCGenerator:
             if (!selectedVuln) return '';
             const url = selectedVuln.url;
             const decodedPayload = atob(selectedVuln.payload || '');
+            if (selectedVuln.method === 'HEADER-GET') {{
+                const hdr = selectedVuln.json_field || 'User-Agent';
+                return "curl -sk \"" + url + "\" -H \"" + hdr + ": " + decodedPayload.replace(/"/g, '\\\\"') + "\"";
+            }}
             if (selectedVuln.method === 'JSON-POST') {{
                 const field = selectedVuln.json_field || 'param';
                 const body = JSON.stringify({{[field]: decodedPayload}});
@@ -2197,22 +2233,32 @@ class PoCGenerator:
             method = "GET"
             url = vuln_url
             payload = ""
-            
-            # Extraer payload de la URL
-            from urllib.parse import parse_qs, urlparse
-            parsed = urlparse(vuln_url)
-            query_params = parse_qs(parsed.query)
-            if query_params:
-                payload = list(query_params.values())[0][0]
-            
+            header_name = None
+
+            # Detectar header injection
+            _hdr_info = _extract_header_injection(vuln_url, bypass_meta)
+            if _hdr_info:
+                method = "HEADER-GET"
+                url = _hdr_info["base_url"]
+                payload = _hdr_info["header_value"]
+                header_name = _hdr_info["header_name"]
+            else:
+                # Extraer payload de la URL
+                from urllib.parse import parse_qs, urlparse
+                parsed = urlparse(vuln_url)
+                query_params = parse_qs(parsed.query)
+                if query_params:
+                    payload = list(query_params.values())[0][0]
+
             vuln_data.append({
                 'index': i,
                 'method': method,
                 'url': url,
                 'payload': payload,
+                'header_name': header_name,
                 'bypass_meta': bypass_meta,
             })
-        
+
         # Generate dropdown options
         dropdown_options = []
         for vuln in vuln_data:
@@ -2331,7 +2377,12 @@ class PoCGenerator:
         }}
 
         function buildCurl(vuln) {{
-            return "curl -sk '" + (vuln ? vuln.url : '') + "'";
+            if (!vuln) return '';
+            if (vuln.method === 'HEADER-GET') {{
+                const hdr = vuln.header_name || 'X-Forwarded-For';
+                return "curl -sk \"" + vuln.url + "\" -H \"" + hdr + ": " + (vuln.payload || '').replace(/"/g, '\\\\"') + "\"";
+            }}
+            return "curl -sk '" + vuln.url + "'";
         }}
 
         const LFI_BYPASS_EXPLANATIONS = {{
@@ -2339,6 +2390,16 @@ class PoCGenerator:
                 "context": "Path Traversal / PHP Wrapper Bypass",
                 "why": "The initial traversal sequence (e.g. ../etc/passwd) was blocked or sanitized. The server showed partial indicators of traversal (error messages, path errors), indicating a filter is present but bypassable.",
                 "how": "Tried alternative encodings and PHP stream wrappers: double URL-encoding (%252e%252e), null-byte injection (%00), dotdotslash variants (....//), or php://filter to encode file content as base64 and bypass open_basedir restrictions."
+            }},
+            "PHP-WRAPPER": {{
+                "context": "PHP Stream Wrapper — Source Code Disclosure",
+                "why": "The parameter name (file, page, template, etc.) suggests it is used to include or load files server-side. PHP's php://filter stream wrapper can encode arbitrary files as base64, bypassing open_basedir restrictions and outputting file content that would otherwise be executed or hidden.",
+                "how": "Injected php://filter/convert.base64-encode/resource=index.php. The response contained a long base64-encoded string not present in the baseline, confirming the file was read and its source code returned encoded."
+            }},
+            "HEADER-LFI": {{
+                "context": "HTTP Header — Path Traversal",
+                "why": "The application uses a header value (e.g. X-Forwarded-For, User-Agent) to build a file path or include a file server-side. Headers bypass most input validation.",
+                "how": "Injected the traversal payload into the HTTP header. The server included the specified file and its content appeared in the response."
             }}
         }};
         
@@ -2825,6 +2886,15 @@ class PoCGenerator:
                 from urllib.parse import urlparse as _up
                 _p = _up(vuln_url)
                 url = f"{_p.scheme}://{_p.netloc}{_p.path}"
+
+            # Detectar header injection
+            _hdr_info_gen = _extract_header_injection(vuln_url, bypass_meta)
+            if _hdr_info_gen:
+                method = "HEADER-GET"
+                url = _hdr_info_gen["base_url"]
+                payload = _hdr_info_gen["header_value"]
+                json_field = _hdr_info_gen["header_name"]
+
             
             vuln_data.append({
                 'index': i,
@@ -2963,6 +3033,10 @@ class PoCGenerator:
 
         function buildCurl(vuln) {{
             if (!vuln) return '';
+            if (vuln.method === 'HEADER-GET') {{
+                const hdr = vuln.json_field || 'X-Forwarded-For';
+                return "curl -sk \"" + vuln.url + "\" -H \"" + hdr + ": " + (vuln.payload || '').replace(/"/g, '\\\\"') + "\"";
+            }}
             if (vuln.method === 'JSON-POST') {{
                 const field = vuln.json_field || 'param';
                 const body = JSON.stringify({{[field]: vuln.payload}});
@@ -2980,6 +3054,16 @@ class PoCGenerator:
         }}
 
         const SQLI_BYPASS_EXPLANATIONS = {{
+            "HEADER-ERROR-BASED": {{
+                "context": "HTTP Header Injection — SQL Error",
+                "why": "The application inserts a header value (X-Forwarded-For, User-Agent, Referer, etc.) directly into a SQL query without sanitization. Headers are rarely validated and often invisible to WAFs that only inspect the request body.",
+                "how": "Injected a SQL error payload as the header value. The response contained a database error message (SQLITE_ERROR, MySQL syntax error, ORA-, etc.), confirming the header is passed to a SQL query unsanitized."
+            }},
+            "HEADER-AUTH-BYPASS": {{
+                "context": "HTTP Header Injection — SQL Authentication Bypass",
+                "why": "The server trusts a header (e.g. X-Forwarded-For) as part of the authentication logic. Injecting a tautology SQL payload changes the WHERE clause result to true.",
+                "how": "Baseline request returned 401. Header injection with ' OR 1=1-- returned 200, confirming SQL auth bypass via the header value."
+            }},
             "AUTH-BYPASS": {{
                 "context": "SQL Injection — Authentication Bypass",
                 "why": "The login endpoint uses a SQL query that concatenates user input without sanitization (e.g. SELECT * FROM users WHERE email='INPUT'). A tautology payload like ' OR 1=1-- makes the WHERE clause always true, returning the first user (usually admin) and granting authenticated access.",
@@ -3402,6 +3486,21 @@ class PoCGenerator:
         if rce_bypass_meta.get("BYPASS_TECHNIQUE"):
             _btech = html.escape(rce_bypass_meta.get("BYPASS_TECHNIQUE", ""))
             _borig = html.escape(rce_bypass_meta.get("BYPASS_ORIGINAL", "—"))
+
+            # Seleccionar explicación según la técnica
+            _rce_why = "Standard pipe/semicolon injections were filtered or sanitized. The bypass payload uses an alternative shell metacharacter or encoding that evades the input validation."
+            _rce_how = "Alternative shell metacharacters: ${IFS} (space substitute), newline injection (%0a), subshell operators ($(), backtick), glob patterns, or base64-encoded commands piped to bash."
+            _rce_ctx = "Command Injection Bypass — filter/WAF evasion required"
+
+            if "BLIND-TIME-BASED" in rce_bypass_meta.get("BYPASS_TECHNIQUE", ""):
+                _rce_ctx = "Blind RCE — Time-Based Detection"
+                _rce_why = "The command output is NOT reflected in the HTTP response (blind RCE). The injection is confirmed by measuring the response time: a sleep/ping payload causing ≥4.5 seconds delay confirms command execution, even without visible output."
+                _rce_how = "Payload 'sleep 5' or 'ping -c 5 127.0.0.1' was injected. Response time exceeded the threshold vs. the baseline (fast) request, confirming OS command execution. To exploit: chain with out-of-band exfiltration (curl/wget to attacker server)."
+            elif "HEADER" in rce_bypass_meta.get("BYPASS_TECHNIQUE", ""):
+                _rce_ctx = "HTTP Header Injection — RCE"
+                _rce_why = "The application passes an HTTP header value (User-Agent, X-Forwarded-For, Referer, etc.) directly to a system() call, exec(), or shell_exec() without sanitization. Headers bypass most WAF rules and input validators."
+                _rce_how = "RCE output (uid=, root:x:0:0, or echo marker) was found in the response after injecting the command payload as a header value. Reproduce with: curl -H 'Header-Name: ; id' target_url"
+
             _rce_bypass_section = f"""
     <div id="bypassBox" style="background:white;padding:15px;margin:15px 0;border-radius:5px;border-left:5px solid #8e44ad;">
         <h3 style="color:#8e44ad;margin-top:0;">&#9889; Bypass Analysis</h3>
@@ -3409,10 +3508,10 @@ class PoCGenerator:
             <thead><tr><th style="background:#8e44ad;color:white;padding:8px 12px;text-align:left;">Field</th><th style="background:#8e44ad;color:white;padding:8px 12px;text-align:left;">Details</th></tr></thead>
             <tbody>
                 <tr><td style="font-weight:bold;color:#555;padding:8px 12px;border-bottom:1px solid #eee;width:28%;">Technique</td><td style="padding:8px 12px;border-bottom:1px solid #eee;">{_btech}</td></tr>
-                <tr><td style="font-weight:bold;color:#555;padding:8px 12px;border-bottom:1px solid #eee;">Injection Context</td><td style="padding:8px 12px;border-bottom:1px solid #eee;">Command Injection Bypass — filter/WAF evasion required</td></tr>
+                <tr><td style="font-weight:bold;color:#555;padding:8px 12px;border-bottom:1px solid #eee;">Injection Context</td><td style="padding:8px 12px;border-bottom:1px solid #eee;">{_rce_ctx}</td></tr>
                 <tr><td style="font-weight:bold;color:#555;padding:8px 12px;border-bottom:1px solid #eee;">Original probe payload</td><td style="padding:8px 12px;border-bottom:1px solid #eee;"><code style="background:#2c3e50;color:#2ecc71;padding:2px 6px;border-radius:3px;font-family:monospace;word-break:break-all;">{_borig}</code></td></tr>
-                <tr><td style="font-weight:bold;color:#555;padding:8px 12px;border-bottom:1px solid #eee;">Why it works</td><td style="padding:8px 12px;border-bottom:1px solid #eee;">Standard pipe/semicolon injections were filtered or sanitized. The bypass payload uses an alternative shell metacharacter or encoding (${{IFS}} for space bypass, %0a for newline injection, backtick or $() for subshell) that evades the input validation pattern.</td></tr>
-                <tr><td style="font-weight:bold;color:#555;padding:8px 12px;border-bottom:1px solid #eee;">How it was done</td><td style="padding:8px 12px;border-bottom:1px solid #eee;">Alternative shell metacharacters: ${{IFS}} (space substitute), newline injection (%0a), subshell operators ($(), backtick), glob patterns, or base64-encoded commands piped to bash.</td></tr>
+                <tr><td style="font-weight:bold;color:#555;padding:8px 12px;border-bottom:1px solid #eee;">Why it works</td><td style="padding:8px 12px;border-bottom:1px solid #eee;">{_rce_why}</td></tr>
+                <tr><td style="font-weight:bold;color:#555;padding:8px 12px;border-bottom:1px solid #eee;">How it was done</td><td style="padding:8px 12px;border-bottom:1px solid #eee;">{_rce_how}</td></tr>
             </tbody>
         </table>
     </div>"""
@@ -3528,7 +3627,25 @@ class PoCGenerator:
 
         function copyCurl() {{
             const select = document.getElementById('payloadSelect');
-            const curlCmd = "curl -sk '" + select.value + "'";
+            const method = "{method}";
+            const bypassTech = "{html.escape(rce_bypass_meta.get('BYPASS_TECHNIQUE',''))}";
+            let curlCmd;
+            if (method === 'HEADER-GET' || bypassTech.startsWith('HEADER')) {{
+                // Header injection: extraer header y payload de la URL fake
+                const urlParsed = new URL(select.value);
+                const hdrParam = Array.from(urlParsed.searchParams.keys()).find(k => k.startsWith('__header_') && k.endsWith('__'));
+                if (hdrParam) {{
+                    const hdrName = hdrParam.slice(9, -2);
+                    const hdrVal  = urlParsed.searchParams.get(hdrParam);
+                    curlCmd = "curl -sk \\"" + urlParsed.origin + urlParsed.pathname + "\\" -H \\"" + hdrName + ": " + hdrVal + "\\"";
+                }} else {{
+                    curlCmd = "curl -sk '" + select.value + "'";
+                }}
+            }} else if (bypassTech.includes('BLIND-TIME-BASED')) {{
+                curlCmd = "curl -sk '" + select.value + "' --max-time 10 -w '\\nTime: %{{time_total}}s'";
+            }} else {{
+                curlCmd = "curl -sk '" + select.value + "'";
+            }}
             navigator.clipboard.writeText(curlCmd).then(function() {{
                 const btn = event.target;
                 const orig = btn.textContent;
@@ -4112,8 +4229,8 @@ class PoCGenerator:
             'screenshot_filename': None
         }
     
-    def generate_ssti_poc(self, vulnerable_urls, screenshot=False, domain=None):
-        """Genera PoC para SSTI con múltiples URLs vulnerables"""
+    def generate_ssti_poc(self, vulnerable_urls, screenshot=False, domain=None):  # noqa
+        """Genera PoC para SSTI con múltiples URLs vulnerables — incluye header injection."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         import hashlib
         urls_str = '|'.join(vulnerable_urls)
@@ -4164,6 +4281,15 @@ class PoCGenerator:
                 from urllib.parse import urlparse as _up
                 _p = _up(vuln_url)
                 url = f"{_p.scheme}://{_p.netloc}{_p.path}"
+
+            # Detectar header injection
+            _hdr_info_gen = _extract_header_injection(vuln_url, bypass_meta)
+            if _hdr_info_gen:
+                method = "HEADER-GET"
+                url = _hdr_info_gen["base_url"]
+                payload = _hdr_info_gen["header_value"]
+                json_field = _hdr_info_gen["header_name"]
+
             
             vuln_data.append({
                 'index': i,
@@ -4308,10 +4434,15 @@ class PoCGenerator:
 
         function buildCurl(vuln) {{
             if (!vuln) return '';
+            if (vuln.method === 'HEADER-GET') {{
+                const hdr = vuln.json_field || 'X-Forwarded-For';
+                return "curl -sk \"" + vuln.url + "\" -H \"" + hdr + ": " + (vuln.payload || '').replace(/"/g, '\\\\"') + "\"";
+            }}
             if (vuln.method === 'JSON-POST') {{
                 const field = vuln.json_field || 'param';
                 const body = JSON.stringify({{[field]: vuln.payload}});
-                return "curl -sk -X POST '" + vuln.url + "' -H 'Content-Type: application/json' -d '" + body + "'";
+                const escapedBody = body.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+                return 'curl -sk -X POST "' + vuln.url + '" -H "Content-Type: application/json" -d "' + escapedBody + '"';
             }}
             if (vuln.method === 'POST' && vuln.form_data && Object.keys(vuln.form_data).length > 0) {{
                 const parts = [];

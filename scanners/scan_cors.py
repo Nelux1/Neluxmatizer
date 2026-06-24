@@ -8,6 +8,11 @@ import threading
 import sys
 import os
 import os
+try:
+    from scanners.throttle import request_throttle
+except ImportError:
+    from throttle import request_throttle
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from vulnerability_manager import vuln_manager
 from parametizer.bounded_pool import run_threadpool_in_chunks
@@ -64,6 +69,7 @@ def cors(urip, urif, urls_vulnerables, threads, custom_headers=None, random_agen
     ban = get_ban_detector()
 
     def test_url(url):
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
         nonlocal found, current
         try:
             # Filtrar archivos estáticos que no son vulnerabilidades CORS reales

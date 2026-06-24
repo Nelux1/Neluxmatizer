@@ -9,6 +9,11 @@ from colorama import init, ansi
 from parametizer.progress import update_progress, print_vulnerability
 from parametizer.core.headers import get_headers
 from parametizer.bounded_pool import run_threadpool_pending_bounded
+try:
+    from scanners.throttle import request_throttle
+except ImportError:
+    from throttle import request_throttle
+
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from vulnerability_manager import vuln_manager
@@ -89,6 +94,7 @@ def hostheader_injection(
     ban = get_ban_detector()
 
     def test_url(url: str):
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
         nonlocal current, found
 
         url_host = urlparse(url).netloc

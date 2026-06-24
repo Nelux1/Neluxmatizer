@@ -51,7 +51,7 @@ def _detect_waf_from_response(response) -> str:
 
 class BanDetector:
     """
-    Thread-safe per-domain IP ban detector.
+    Thread-safe per-domain IP ban detector with auto-throttle on 429 Rate-Limit.
 
     Usage in a scanner:
         detector = get_ban_detector()   # singleton per process
@@ -61,10 +61,21 @@ class BanDetector:
         detector.record(domain, status_code, response_obj, base_url)
     """
 
+    # How many consecutive 429s before bumping the auto-throttle level
+    _RATE_LIMIT_STEP = 5
+    # Maximum extra delay added per throttle level (seconds)
+    _THROTTLE_STEP_SECS = 0.5
+    # Maximum throttle level (level 4 = +2.0 s per request)
+    _THROTTLE_MAX_LEVEL = 4
+
     def __init__(self):
         self._lock = threading.Lock()
         # domain → count of consecutive blocked responses
         self._consecutive: dict[str, int] = {}
+        # domain → count of consecutive 429 specifically (for auto-throttle)
+        self._consec_429: dict[str, int] = {}
+        # domain → auto-throttle level (0 = no extra delay, max = _THROTTLE_MAX_LEVEL)
+        self._throttle_level: dict[str, int] = {}
         # domains confirmed as IP-banned
         self._banned: set[str] = set()
         # domains where we already printed the ban message (avoid spam)
@@ -114,6 +125,14 @@ class BanDetector:
                 _print_ban_message(domain, waf_name, blocked_status)
         return True
 
+    def get_extra_delay(self, domain: str) -> float:
+        """
+        Return the extra auto-throttle delay (seconds) accumulated for this domain
+        due to repeated 429 Rate-Limit responses.  Returns 0.0 if not throttled.
+        """
+        with self._lock:
+            return self._throttle_level.get(domain, 0) * self._THROTTLE_STEP_SECS
+
     def record(self, domain: str, status_code: int,
                response=None, base_url: str = "") -> None:
         """
@@ -124,23 +143,38 @@ class BanDetector:
         - base_url: full URL used to build the clean probe
         """
         do_check = False
+        throttle_bumped = False
+        new_level = 0
+
         with self._lock:
             if domain in self._banned:
                 return
 
             if status_code in BLOCKED_STATUSES:
                 self._consecutive[domain] = self._consecutive.get(domain, 0) + 1
+
+                # Auto-throttle: track 429 Rate-Limit responses separately
+                if status_code == 429:
+                    self._consec_429[domain] = self._consec_429.get(domain, 0) + 1
+                    if self._consec_429[domain] % self._RATE_LIMIT_STEP == 0:
+                        current = self._throttle_level.get(domain, 0)
+                        if current < self._THROTTLE_MAX_LEVEL:
+                            self._throttle_level[domain] = current + 1
+                            new_level = current + 1
+                            throttle_bumped = True
             else:
-                # Non-blocked response: reset counter and continue attacking
+                # Non-blocked response: reset consecutive counters
                 self._consecutive[domain] = 0
+                self._consec_429[domain] = 0
                 return
 
             if self._consecutive.get(domain, 0) >= BAN_THRESHOLD:
                 # Reset NOW inside the lock so only ONE thread fires the clean probe.
-                # After the probe, if not banned, counter stays at 0 and accumulates
-                # again — re-check triggers after every BAN_THRESHOLD blocked responses.
                 self._consecutive[domain] = 0
                 do_check = True
+
+        if throttle_bumped:
+            _print_throttle_message(domain, new_level, self._THROTTLE_STEP_SECS)
 
         if do_check:
             self._check_ban(domain, response, base_url)
@@ -182,6 +216,19 @@ class BanDetector:
             else:
                 # WAF blocks payloads but not our IP — reset and continue
                 self._consecutive[domain] = 0
+
+
+def _print_throttle_message(domain: str, level: int, step: float) -> None:
+    import sys
+    extra = level * step
+    msg = (
+        f"\n\033[1;33m[!] [AUTO-THROTTLE]\033[0m Rate-limiting detected on "
+        f"\033[1;36m{domain}\033[0m. "
+        f"Injecting +{extra:.1f}s extra delay per request (level {level}/{4}). "
+        f"Use -delay to set a manual base delay.\n"
+    )
+    sys.stdout.write(msg)
+    sys.stdout.flush()
 
 
 def _print_ban_message(domain: str, waf_name: str, status_code: int = 403) -> None:

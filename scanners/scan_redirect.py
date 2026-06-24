@@ -6,6 +6,11 @@ import random, sys, os, threading
 from parametizer.progress import update_progress, print_vulnerability
 from parametizer.core.headers import get_headers
 from colorama import Cursor, ansi, init
+try:
+    from scanners.throttle import request_throttle
+except ImportError:
+    from throttle import request_throttle
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from vulnerability_manager import vuln_manager
 
@@ -94,6 +99,7 @@ def redirect(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, ra
     ban = get_ban_detector()
 
     def test_get_redirect(url):
+        request_throttle(urlparse(url).netloc)
         nonlocal current, found
         parsed = urlparse(url)
         base = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
@@ -188,6 +194,7 @@ def redirect(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, ra
 
     # Si hay URLs POST, se prueba en POST también (urif)
     def test_post_redirect(url):
+        request_throttle(urlparse(url).netloc)
         nonlocal current, found
         parsed = urlparse(url)
         base = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"

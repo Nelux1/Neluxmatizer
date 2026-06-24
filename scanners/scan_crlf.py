@@ -2,6 +2,11 @@ import requests
 import random
 import sys
 import os
+try:
+    from scanners.throttle import request_throttle
+except ImportError:
+    from throttle import request_throttle
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from vulnerability_manager import vuln_manager
 from parametizer.progress import update_progress, print_vulnerability
@@ -405,6 +410,7 @@ def crlf(urip, urif, urls_vulnerables, threads, custom_headers, random_agent):
     ban = get_ban_detector()
 
     def test_url(url):
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
         nonlocal current
         base_url = url.split('?')[0]
 

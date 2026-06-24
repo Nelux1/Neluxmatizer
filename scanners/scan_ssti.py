@@ -10,6 +10,11 @@ import urllib3
 import threading
 import sys
 import os
+try:
+    from scanners.throttle import request_throttle
+except ImportError:
+    from throttle import request_throttle
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from vulnerability_manager import vuln_manager
 
@@ -366,6 +371,7 @@ def ssti(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
             return ""  # Cualquier otro error
 
     def test_url(url, payload):
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
         nonlocal current
         parsed = urlparse(url)
         base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
@@ -452,6 +458,7 @@ def ssti(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
             update_progress(current, total_tasks)
 
     def test_post(url, payload):
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
         nonlocal current
         parsed = urlparse(url)
         base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
@@ -516,6 +523,7 @@ def ssti(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
             update_progress(current, total_tasks)
 
     def test_form(url, payload):
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
         nonlocal current
         headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
         try:
@@ -602,6 +610,7 @@ def ssti(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
 
     def test_json_ssti(url, payload):
         """Prueba SSTI vía JSON body. Soporta endpoints con y sin query params."""
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
         nonlocal current
         parsed = urlparse(url)
         base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"

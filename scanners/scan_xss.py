@@ -12,6 +12,11 @@ from colorama import init, ansi
 from parametizer.progress import update_progress, print_vulnerability
 from parametizer.core.headers import get_headers
 import urllib3
+try:
+    from scanners.throttle import request_throttle
+except ImportError:
+    from throttle import request_throttle
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from vulnerability_manager import vuln_manager
 
@@ -30,14 +35,26 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # Solo los 2 payloads más efectivos para DOM-based: img onerror y svg onload.
 # Más payloads = más tiempo por URL. Si alguno falla el otro suele cubrir el caso.
 _DOM_XSS_PAYLOADS = [
+    # Alert clásico — detectable via dialog event
     "<img src=x onerror=\"alert('neluxXSS')\">",
     "<svg/onload=\"alert('neluxXSS')\">",
+    # console.log — detectable via console event (Angular/React sanitizan alert pero no console)
+    "<img src=x onerror=\"console.log('neluxXSS')\">",
+    "<svg/onload=\"console.log('neluxXSS')\">",
+    # Sin etiquetas HTML — sinks como innerHTML con ejecución directa
+    "javascript:alert('neluxXSS')",
+    # Event handler en atributo — útil cuando el contexto es un atributo HTML
+    "\" onmouseover=\"alert('neluxXSS')\" x=\"",
+    "' onmouseover='alert(\"neluxXSS\")' x='",
+    # Template injection Angular/Vue (si el sink es interpolación)
+    "{{constructor.constructor('alert(\"neluxXSS\")')()}}",
 ]
-_DOM_XSS_MARKER    = "neluxXSS"
-_DOM_XSS_URL_LIMIT = 60    # max URLs testeadas headlessly (reducido de 80)
-_DOM_XSS_TIMEOUT   = 4000  # ms por navegación (reducido de 7000)
-_DOM_XSS_SETTLE    = 600   # ms de espera post-load (reducido de 2000; la mayoría de SPAs renderizan en <500ms)
-_DOM_XSS_MAX_WORKERS = 4   # instancias paralelas de Chromium (cada thread lanza su propio browser)
+_DOM_XSS_MARKER      = "neluxXSS"
+_DOM_XSS_URL_LIMIT   = 60    # max URLs testeadas headlessly
+_DOM_XSS_TIMEOUT     = 6000  # ms por navegación (aumentado para SPAs lentas)
+_DOM_XSS_SETTLE      = 1200  # ms post-load para Angular/React (aumentado de 600)
+_DOM_XSS_SPA_SETTLE  = 2500  # ms extra para fragment URLs (SPAs con routing)
+_DOM_XSS_MAX_WORKERS = 4     # instancias paralelas de Chromium
 
 # Parámetros que suelen reflejarse en el DOM (mayor prioridad en el batch headless)
 _DOM_XSS_PRIORITY_PARAMS: frozenset = frozenset({
@@ -110,6 +127,17 @@ def _strip_tracking_params(url: str) -> str:
     except Exception:
         return url
 
+
+# Headers inyectables para XSS (reflejados en error pages, logs, etc.)
+_XSS_INJECTABLE_HEADERS: list = [
+    "User-Agent",
+    "Referer",
+    "X-Forwarded-For",
+    "X-Real-IP",
+    "X-Forwarded-Host",
+    "Accept-Language",
+    "CF-Connecting-IP",
+]
 
 # Campos JSON comunes para probar en endpoints sin query params
 _JSON_COMMON_FIELDS: list = [
@@ -247,6 +275,7 @@ def _dom_xss_batch(
                         )
                         page = ctx.new_page()
                         dialog_history: list = []
+                        console_history: list = []
 
                         def _on_dialog(dialog):
                             try:
@@ -259,7 +288,15 @@ def _dom_xss_batch(
                             except Exception:
                                 pass
 
+                        def _on_console(msg):
+                            try:
+                                txt = msg.text or ""
+                            except Exception:
+                                txt = ""
+                            console_history.append(txt)
+
                         page.on("dialog", _on_dialog)
+                        page.on("console", _on_console)
 
                         for url in chunk:
                             with progress_lock:
@@ -286,6 +323,9 @@ def _dom_xss_batch(
                             if not qs:
                                 continue
 
+                            # SPAs con fragment necesitan más tiempo de settle
+                            settle_ms = _DOM_XSS_SPA_SETTLE if is_fragment_url else _DOM_XSS_SETTLE
+
                             vuln_found_for_url = False
                             for param in qs:
                                 if _is_non_injectable_param(param):
@@ -295,6 +335,7 @@ def _dom_xss_batch(
 
                                 for payload in _DOM_XSS_PAYLOADS:
                                     dialog_history.clear()
+                                    console_history.clear()
 
                                     data = {p: "TEST123" for p in qs}
                                     data[param] = payload
@@ -309,14 +350,26 @@ def _dom_xss_batch(
                                     try:
                                         page.goto(
                                             test_url_str,
-                                            wait_until="domcontentloaded",
+                                            wait_until="load",
                                             timeout=_DOM_XSS_TIMEOUT,
                                         )
-                                        page.wait_for_timeout(_DOM_XSS_SETTLE)
+                                        page.wait_for_timeout(settle_ms)
                                     except Exception:
                                         continue
 
-                                    if any(_DOM_XSS_MARKER in m for m in dialog_history):
+                                    # Detectar via dialog (alert/confirm/prompt)
+                                    dialog_hit = any(_DOM_XSS_MARKER in m for m in dialog_history)
+                                    # Detectar via console.log (Angular/React no bloquean console)
+                                    console_hit = any(_DOM_XSS_MARKER in m for m in console_history)
+                                    # Detectar via DOM — buscar el marker en el HTML renderizado
+                                    try:
+                                        dom_hit = page.evaluate(
+                                            f"() => document.documentElement.innerHTML.includes('{_DOM_XSS_MARKER}')"
+                                        ) if not dialog_hit and not console_hit else False
+                                    except Exception:
+                                        dom_hit = False
+
+                                    if dialog_hit or console_hit or dom_hit:
                                         sys.stdout.write("\r\033[K")
                                         sys.stdout.flush()
                                         with results_lock:
@@ -544,7 +597,11 @@ def _xss_bypass_payloads_for(context: str, headers) -> list:
 def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, random_agent=False):
     print('\033[1;36m<<<<<<<<<<<<\033[0m Testing Cross-Site Scripting \033[1;36m>>>>>>>>>>>>>\033[0m')
     print()
-    total = (len(urip) * 3 + len(urif) * 2) * len(wordlist)  # GET+POST+JSON (urip) + FORM+JSON (urif)
+    _xss_unique_bases = len({urlparse(u).netloc + urlparse(u).path for u in urip + urif})
+    total = (
+        (len(urip) * 3 + len(urif) * 2) * len(wordlist)   # GET+POST+JSON / FORM+JSON
+        + _xss_unique_bases * min(3, len(wordlist))         # Header XSS
+    )
     current = 0
     found = 0
     lock = threading.Lock()
@@ -562,6 +619,7 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
     stdout_lock = threading.Lock()
 
     def test_url(url, payload):
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
         nonlocal current, found
         parsed = urlparse(url)
         base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
@@ -810,6 +868,7 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
             update_progress(current, total)
 
     def test_form(url, payload):
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
         nonlocal current, found
         try:
             headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
@@ -954,6 +1013,7 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
 
     def test_json_xss(url, payload):
         """Prueba XSS vía JSON body. Soporta endpoints con y sin query params."""
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
         nonlocal current, found
         parsed = urlparse(url)
         base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
@@ -1087,6 +1147,67 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
             current += 1
             update_progress(current, total)
 
+    def test_headers_xss(url, payload):
+        """Prueba XSS inyectando el payload en headers HTTP comunes."""
+        request_throttle(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(url).netloc)
+        nonlocal current, found
+        parsed = urlparse(url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+        if _is_static_path(url) or vuln_manager.should_skip_url(base_url, base_url_only=True):
+            with lock:
+                current += 1
+                update_progress(current, total)
+            return
+
+        if ban.is_banned(parsed.netloc):
+            with lock:
+                current += 1
+                update_progress(current, total)
+            return
+
+        base_headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
+
+        for hdr in _XSS_INJECTABLE_HEADERS:
+            if vuln_manager.should_skip_url(base_url, base_url_only=True):
+                break
+            try:
+                injected_h = dict(base_headers)
+                injected_h[hdr] = payload
+                r = requests.get(base_url, headers=injected_h, verify=False, timeout=5)
+                ban.record(parsed.netloc, r.status_code, r, base_url)
+
+                if r.status_code not in (200, 400, 404, 500):
+                    continue
+
+                # Verificar reflexión del payload en el response (sin encoding)
+                # Usar el mismo marcador único del scanner HTTP para evitar FPs
+                marker = f"neluxXSS{abs(hash(base_url)) % 9999}"
+                probe_h = dict(base_headers)
+                probe_h[hdr] = f'<script>alert("{marker}")</script>'
+                rp = requests.get(base_url, headers=probe_h, verify=False, timeout=5)
+                if marker in rp.text:
+                    vuln_url = f"{base_url}?__header_{hdr}__={quote(probe_h[hdr], safe='')}"
+                    if vuln_url not in found_urls:
+                        with lock:
+                            found_urls.add(vuln_url)
+                        vuln_manager.mark_as_exploited(base_url, base_url_only=True)
+                        with stdout_lock:
+                            print_vulnerability(
+                                f"\033[1;32m[HEADER-XSS][REFLECTED]\033[0m "
+                                f"{base_url} \033[2m(header: {hdr})\033[0m"
+                            )
+                        entry = f"{base_url}?__header_{hdr}__={quote(probe_h[hdr], safe='')}|||BYPASS_TECHNIQUE:HEADER-XSS"
+                        urls_vulnerables.append(entry)
+                        found.append(entry)
+                    break
+            except Exception:
+                continue
+
+        with lock:
+            current += 1
+            update_progress(current, total)
+
     def _iter_xss_tasks():
         for url in urip:
             for payload in wordlist:
@@ -1096,6 +1217,15 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
             for payload in wordlist:
                 yield (test_form, url, payload)
                 yield (test_json_xss, url, payload)
+        # Header injection: top-3 payloads por endpoint único
+        seen_bases_xss = set()
+        for url in urip + urif:
+            pxss = urlparse(url)
+            base_xss = f"{pxss.scheme}://{pxss.netloc}{pxss.path}"
+            if base_xss not in seen_bases_xss:
+                seen_bases_xss.add(base_xss)
+                for payload in wordlist[:3]:
+                    yield (test_headers_xss, url, payload)
 
     try:
         run_threadpool_pending_bounded(_iter_xss_tasks(), threads)

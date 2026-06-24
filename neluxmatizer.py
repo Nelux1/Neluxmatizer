@@ -179,6 +179,17 @@ parser.add_argument("-poc", "--poc",
                     dest="poc",
                     help="Generate Proof of Concept (PoC) artifacts (HTML + screenshots)",
                     action='store_true')
+parser.add_argument("-delay",
+                    dest="delay",
+                    help="Delay in seconds between requests to avoid rate-limiting (e.g. 0.5 = 500ms). "
+                         "Combined with -jitter for variable timing.",
+                    type=float,
+                    default=0.0)
+parser.add_argument("-jitter",
+                    dest="jitter",
+                    help="Randomise -delay: each request waits a random time in [0, delay] seconds "
+                         "instead of a fixed interval. Makes traffic patterns less detectable.",
+                    action='store_true')
 parser.add_argument("-ssrf",
                     dest="ssrf",
                     help="Check SSRF vulnerability or params.",
@@ -225,6 +236,17 @@ def selector():
     # Salida (-o, output/, checkpoints, PoC) respecto al directorio actual al arrancar
     work_dir = os.path.abspath(os.getcwd())
     os.environ["NELUXMATIZER_WORKDIR"] = work_dir
+
+    # Throttle settings — read by scanners/throttle.py at request time
+    if args.delay and args.delay > 0:
+        os.environ["NELUXMATIZER_REQUEST_DELAY"] = str(args.delay)
+        sys.stdout.write(
+            f'\033[1;36m[+] Request delay: {args.delay}s'
+            f'{" (with jitter)" if args.jitter else ""}\033[0m\n'
+        )
+        sys.stdout.flush()
+    if args.jitter:
+        os.environ["NELUXMATIZER_JITTER"] = "1"
 
     output = os.path.join(work_dir, "output", "param.txt")
     url = []
