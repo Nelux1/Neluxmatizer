@@ -2108,7 +2108,7 @@ class PoCGenerator:
             const decodedPayload = atob(selectedVuln.payload || '');
             if (selectedVuln.method === 'HEADER-GET') {{
                 const hdr = selectedVuln.json_field || 'User-Agent';
-                return "curl -sk \"" + url + "\" -H \"" + hdr + ": " + decodedPayload.replace(/"/g, '\\\\"') + "\"";
+                return "curl -sk '" + url + "' -H '" + hdr + ": " + decodedPayload + "'";
             }}
             if (selectedVuln.method === 'JSON-POST') {{
                 const field = selectedVuln.json_field || 'param';
@@ -2380,7 +2380,7 @@ class PoCGenerator:
             if (!vuln) return '';
             if (vuln.method === 'HEADER-GET') {{
                 const hdr = vuln.header_name || 'X-Forwarded-For';
-                return "curl -sk \"" + vuln.url + "\" -H \"" + hdr + ": " + (vuln.payload || '').replace(/"/g, '\\\\"') + "\"";
+                return "curl -sk '" + vuln.url + "' -H '" + hdr + ": " + (vuln.payload || '') + "'";
             }}
             return "curl -sk '" + vuln.url + "'";
         }}
@@ -3035,14 +3035,13 @@ class PoCGenerator:
             if (!vuln) return '';
             if (vuln.method === 'HEADER-GET') {{
                 const hdr = vuln.json_field || 'X-Forwarded-For';
-                return "curl -sk \"" + vuln.url + "\" -H \"" + hdr + ": " + (vuln.payload || '').replace(/"/g, '\\\\"') + "\"";
+                return "curl -sk '" + vuln.url + "' -H '" + hdr + ": " + (vuln.payload || '') + "'";
             }}
             if (vuln.method === 'JSON-POST') {{
                 const field = vuln.json_field || 'param';
                 const body = JSON.stringify({{[field]: vuln.payload}});
                 // Use double-quoted outer shell string so single quotes in payload don't break it
-                const escapedBody = body.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-                return 'curl -sk -X POST "' + vuln.url + '" -H "Content-Type: application/json" -d "' + escapedBody + '"';
+                return "curl -sk -X POST '" + vuln.url + "' -H 'Content-Type: application/json' -d '" + body + "'";
             }}
             if (vuln.method === 'POST' && vuln.form_data && Object.keys(vuln.form_data).length > 0) {{
                 const parts = [];
@@ -3637,7 +3636,7 @@ class PoCGenerator:
                 if (hdrParam) {{
                     const hdrName = hdrParam.slice(9, -2);
                     const hdrVal  = urlParsed.searchParams.get(hdrParam);
-                    curlCmd = "curl -sk \\"" + urlParsed.origin + urlParsed.pathname + "\\" -H \\"" + hdrName + ": " + hdrVal + "\\"";
+                    curlCmd = "curl -sk '" + urlParsed.origin + urlParsed.pathname + "' -H '" + hdrName + ": " + hdrVal + "'";
                 }} else {{
                     curlCmd = "curl -sk '" + select.value + "'";
                 }}
@@ -4436,13 +4435,12 @@ class PoCGenerator:
             if (!vuln) return '';
             if (vuln.method === 'HEADER-GET') {{
                 const hdr = vuln.json_field || 'X-Forwarded-For';
-                return "curl -sk \"" + vuln.url + "\" -H \"" + hdr + ": " + (vuln.payload || '').replace(/"/g, '\\\\"') + "\"";
+                return "curl -sk '" + vuln.url + "' -H '" + hdr + ": " + (vuln.payload || '') + "'";
             }}
             if (vuln.method === 'JSON-POST') {{
                 const field = vuln.json_field || 'param';
                 const body = JSON.stringify({{[field]: vuln.payload}});
-                const escapedBody = body.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-                return 'curl -sk -X POST "' + vuln.url + '" -H "Content-Type: application/json" -d "' + escapedBody + '"';
+                return "curl -sk -X POST '" + vuln.url + "' -H 'Content-Type: application/json' -d '" + body + "'";
             }}
             if (vuln.method === 'POST' && vuln.form_data && Object.keys(vuln.form_data).length > 0) {{
                 const parts = [];
