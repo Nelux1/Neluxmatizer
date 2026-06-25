@@ -656,7 +656,18 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
                 try:
                     data = {p: "TEST123" for p in qs}
                     r = session.get(base_url, params=data, verify=False, timeout=5)
-                    if r.status_code == 200:
+                    # Descarta si redirige a otro dominio (los parámetros viajan en el redirect
+                    # y el scanner detectaría el payload en la URL del destino → falso positivo)
+                    if r.history:
+                        orig_host = urlparse(base_url).netloc.lower()
+                        final_host = urlparse(r.url).netloc.lower()
+                        if orig_host != final_host:
+                            baseline_cache[baseline_key] = "__CROSS_DOMAIN_REDIRECT__"
+                        elif r.status_code == 200:
+                            baseline_cache[baseline_key] = r.text
+                        else:
+                            baseline_cache[baseline_key] = ""
+                    elif r.status_code == 200:
                         baseline_cache[baseline_key] = r.text
                     else:
                         baseline_cache[baseline_key] = ""
@@ -667,8 +678,9 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
                 except Exception:
                     baseline_cache[baseline_key] = ""
             baseline = baseline_cache[baseline_key]
-            
-            if not baseline:
+
+            # Saltar si el endpoint redirige a otro dominio (FP por query params en redirect)
+            if baseline == "__CROSS_DOMAIN_REDIRECT__" or not baseline:
                 continue
 
             # Probar payload XSS
@@ -766,7 +778,16 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
                 try:
                     data = {p: "TEST123" for p in qs}
                     r = session.post(base_url, data=data, verify=False, timeout=5)
-                    if r.status_code == 200:
+                    if r.history:
+                        orig_host = urlparse(base_url).netloc.lower()
+                        final_host = urlparse(r.url).netloc.lower()
+                        if orig_host != final_host:
+                            baseline_cache[baseline_key] = "__CROSS_DOMAIN_REDIRECT__"
+                        elif r.status_code == 200:
+                            baseline_cache[baseline_key] = r.text
+                        else:
+                            baseline_cache[baseline_key] = ""
+                    elif r.status_code == 200:
                         baseline_cache[baseline_key] = r.text
                     else:
                         baseline_cache[baseline_key] = ""
@@ -777,8 +798,8 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
                 except Exception:
                     baseline_cache[baseline_key] = ""
             baseline = baseline_cache[baseline_key]
-            
-            if not baseline:
+
+            if baseline == "__CROSS_DOMAIN_REDIRECT__" or not baseline:
                 continue
 
             # Probar payload XSS

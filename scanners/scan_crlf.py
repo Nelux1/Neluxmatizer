@@ -216,7 +216,18 @@ def _crlf_semantic_success(
     if "location" in pl and "example.com" in pl:
         r = rh.get("location", "")
         if "example.com" in r.lower() and "example.com" not in bh.get("location", "").lower():
-            return "Location includes example.com (semantic detection)"
+            # Descartar si example.com sólo aparece URL-encoded como query param del redirect
+            # (el servidor copió el payload al Location sin inyección real de headers)
+            import urllib.parse as _up
+            r_decoded = _up.unquote(r).lower()
+            # Si el Location es del servidor original (mismo host) y example.com aparece
+            # sólo dentro de un query param (= el servidor pasó el payload como ?param=...),
+            # no es CRLF real — el servidor encodificó los \r\n antes de redireccionar.
+            if "%0d%0a" not in r.lower() and "\r\n" not in r and "\n" not in r:
+                # El Location no contiene saltos de línea reales → no hubo inyección
+                pass
+            else:
+                return "Location includes example.com (semantic detection)"
 
     # Ya no se usa Cache-Control: no-store en el payload (demasiados FP vs CDN). Ver CRLF_PAYLOAD_X_NELUX.
     if "x-nelux-crlf" in pl and crlf_probe_mark_lower in pl:
@@ -445,13 +456,34 @@ def crlf(urip, urif, urls_vulnerables, threads, custom_headers, random_agent):
                     get_headers(random_agent=random_agent, custom_headers=custom_headers)
                 )
                 try:
-                    baseline_response = requests.get(url, headers=headers, verify=False, timeout=5)
-                    baseline_cache[baseline_key] = (
-                        baseline_response.headers,
-                        baseline_response.status_code,
-                    )
+                    baseline_response = requests.get(url, headers=headers, verify=False,
+                                                     timeout=5, allow_redirects=False)
+                    # Si el baseline ya redirige a otro dominio, skip completo:
+                    # los query params viajan en el Location y el scanner detectaría
+                    # nuestro payload en ese header — falso positivo garantizado.
+                    if baseline_response.status_code in (301, 302, 303, 307, 308):
+                        loc = baseline_response.headers.get("Location", "")
+                        orig_host = urlparse(base_url).netloc.lower()
+                        final_host = urlparse(loc).netloc.lower() if loc.startswith("http") else orig_host
+                        if orig_host != final_host:
+                            baseline_cache[baseline_key] = ("__CROSS_DOMAIN_REDIRECT__", None)
+                        else:
+                            baseline_cache[baseline_key] = (
+                                baseline_response.headers,
+                                baseline_response.status_code,
+                            )
+                    else:
+                        baseline_cache[baseline_key] = (
+                            baseline_response.headers,
+                            baseline_response.status_code,
+                        )
                 except (requests.exceptions.Timeout, requests.exceptions.RequestException):
                     baseline_cache[baseline_key] = ({}, None)
+            # Skip si el endpoint redirige cross-domain (FP por query param en Location)
+            if baseline_cache[baseline_key][0] == "__CROSS_DOMAIN_REDIRECT__":
+                bump()
+                return
+
             baseline_headers, baseline_status_get = _crlf_unpack_baseline(
                 baseline_cache[baseline_key]
             )
@@ -605,13 +637,33 @@ Full URL length: {len(req_url)} characters
                     )
                     data = {k: "TEST123" for k in params}
                     try:
-                        baseline_response = requests.post(post_url, headers=headers, data=data, verify=False, timeout=5)
-                        baseline_cache[baseline_key] = (
-                            baseline_response.headers,
-                            baseline_response.status_code,
-                        )
+                        baseline_response = requests.post(post_url, headers=headers, data=data,
+                                                          verify=False, timeout=5,
+                                                          allow_redirects=False)
+                        if baseline_response.status_code in (301, 302, 303, 307, 308):
+                            loc = baseline_response.headers.get("Location", "")
+                            orig_host = urlparse(post_url).netloc.lower()
+                            final_host = urlparse(loc).netloc.lower() if loc.startswith("http") else orig_host
+                            if orig_host != final_host:
+                                baseline_cache[baseline_key] = ("__CROSS_DOMAIN_REDIRECT__", None)
+                            else:
+                                baseline_cache[baseline_key] = (
+                                    baseline_response.headers,
+                                    baseline_response.status_code,
+                                )
+                        else:
+                            baseline_cache[baseline_key] = (
+                                baseline_response.headers,
+                                baseline_response.status_code,
+                            )
                     except (requests.exceptions.Timeout, requests.exceptions.RequestException):
                         baseline_cache[baseline_key] = ({}, None)
+
+                # Skip si redirige cross-domain
+                if baseline_cache[baseline_key][0] == "__CROSS_DOMAIN_REDIRECT__":
+                    bump()
+                    return
+
                 baseline_headers, baseline_status_post = _crlf_unpack_baseline(
                     baseline_cache[baseline_key]
                 )

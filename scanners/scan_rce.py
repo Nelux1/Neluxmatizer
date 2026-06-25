@@ -581,14 +581,31 @@ def rce(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
                     data = {k: tp if k == param else "TEST123" for k in qs}
                     t0 = time.monotonic()
                     r = requests.get(base_url, params=data, headers=headers,
-                                     verify=False, timeout=_RCE_TIME_THRESHOLD + 2)
+                                     verify=False, timeout=_RCE_TIME_THRESHOLD + 2,
+                                     allow_redirects=True)
                     elapsed = time.monotonic() - t0
+
+                    # Descartar si redirige a otro dominio — el delay es de la cadena de
+                    # redirects, no de ejecución real del comando
+                    if r.history:
+                        orig_host = urlparse(base_url).netloc.lower()
+                        final_host = urlparse(r.url).netloc.lower()
+                        if orig_host != final_host:
+                            break  # este endpoint sólo redirige, saltar todos los payloads
+
                     if elapsed >= _RCE_TIME_THRESHOLD and r.status_code == 200:
                         # Confirmación: re-enviar para descartar lentitud del servidor
                         t1 = time.monotonic()
-                        requests.get(base_url, params={k: "TEST123" for k in qs},
-                                     headers=headers, verify=False, timeout=5)
+                        rb = requests.get(base_url, params={k: "TEST123" for k in qs},
+                                          headers=headers, verify=False, timeout=8,
+                                          allow_redirects=True)
                         baseline_time = time.monotonic() - t1
+                        # Descartar si el baseline también redirige cross-domain
+                        if rb.history:
+                            b_orig = urlparse(base_url).netloc.lower()
+                            b_final = urlparse(rb.url).netloc.lower()
+                            if b_orig != b_final:
+                                break
                         if elapsed >= baseline_time + _RCE_TIME_THRESHOLD * 0.6:
                             _report_rce("GET", base_url, param, tp, "BLIND-TIME-BASED")
                             break
