@@ -488,6 +488,13 @@ def crlf(urip, urif, urls_vulnerables, threads, custom_headers, random_agent):
                 baseline_cache[baseline_key]
             )
 
+            parsed_url = urlparse(url)
+            get_pairs = parse_qsl(parsed_url.query, keep_blank_values=True) if parsed_url.query else []
+            get_first_param = get_pairs[0][0] if get_pairs else ""
+            if vuln_manager.should_skip_url(base_url, get_first_param):
+                bump()
+                return
+
             for payload in crlf_payloads:
                 payload_hit = False
                 for req_url in _crlf_get_variants(url, payload):
@@ -515,10 +522,10 @@ def crlf(urip, urif, urls_vulnerables, threads, custom_headers, random_agent):
                             )
                             if is_vulnerable:
                                 with lock:
-                                    if req_url not in found_urls:
-                                        found_urls.add(req_url)
+                                    if f"{base_url}|{get_first_param}" not in found_urls:
+                                        found_urls.add(f"{base_url}|{get_first_param}")
                                         vuln_manager.mark_as_exploited(
-                                            base_url, base_url_only=True
+                                            base_url, get_first_param
                                         )
 
                                         with stdout_lock:
@@ -668,6 +675,11 @@ Full URL length: {len(req_url)} characters
                     baseline_cache[baseline_key]
                 )
 
+                post_first_param = list(params.keys())[0] if params else ""
+                if vuln_manager.should_skip_url(base_url, post_first_param):
+                    bump()
+                    return
+
                 for payload in crlf_payloads:
                     headers = _crlf_with_cache_headers(
                         get_headers(random_agent=random_agent, custom_headers=custom_headers)
@@ -692,10 +704,10 @@ Full URL length: {len(req_url)} characters
                             )
                             if is_vulnerable:
                                 with lock:
-                                    if url not in found_urls:
-                                        found_urls.add(url)
+                                    if f"{base_url}|{post_first_param}" not in found_urls:
+                                        found_urls.add(f"{base_url}|{post_first_param}")
                                         vuln_manager.mark_as_exploited(
-                                            base_url, base_url_only=True
+                                            base_url, post_first_param
                                         )
 
                                         with stdout_lock:

@@ -134,9 +134,10 @@ def xxe(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
     def _report_vuln(endpoint, vuln_type, risk_level, payload, label="POST"):
         nonlocal found
         with lock:
-            if endpoint not in vulnerable_endpoints:
+            if endpoint not in vulnerable_endpoints and not vuln_manager.should_skip_url(endpoint):
                 vulnerable_endpoints.add(endpoint)
                 urls_vulnerables.append(endpoint)
+                vuln_manager.mark_as_exploited(endpoint)
                 with stdout_lock:
                     print_vulnerability(f"\033[1;32m[{label}] [VULNERABLE]\033[0m {endpoint}")
                     sys.stdout.write(f"Vulnerability Type: {vuln_type}\n")
@@ -156,7 +157,7 @@ def xxe(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
                 return  # finally incrementa current
 
             with lock:
-                if base in vulnerable_endpoints:
+                if base in vulnerable_endpoints or vuln_manager.should_skip_url(base):
                     return  # finally incrementa current
 
             headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
@@ -214,7 +215,7 @@ def xxe(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
         target = host_base.rstrip('/') + probe_path
         try:
             with lock:
-                if target in vulnerable_endpoints:
+                if target in vulnerable_endpoints or vuln_manager.should_skip_url(target):
                     return  # finally incrementa current
 
             headers = get_headers(random_agent=random_agent, custom_headers=custom_headers)
@@ -264,7 +265,7 @@ def xxe(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
         for url in urip:
             parsed = urlparse(url)
             base = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-            if base not in vulnerable_endpoints:
+            if base not in vulnerable_endpoints and not vuln_manager.should_skip_url(base):
                 seen_bases.add(base)
                 for ct in _XML_CONTENT_TYPES:
                     for payload in wordlist:
@@ -273,7 +274,7 @@ def xxe(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
         for url in urif:
             parsed = urlparse(url)
             base = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-            if base not in vulnerable_endpoints:
+            if base not in vulnerable_endpoints and not vuln_manager.should_skip_url(base):
                 seen_bases.add(base)
                 for ct in _XML_CONTENT_TYPES:
                     for payload in wordlist:

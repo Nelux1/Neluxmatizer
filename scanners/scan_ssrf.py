@@ -361,6 +361,12 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
             if param.lower() not in ssrf_params:
                 continue
 
+            if vuln_manager.should_skip_url(base, param):
+                with lock:
+                    current += 1
+                    update_progress(current, total_tasks)
+                return
+
             data = {k: payload if k == param else "TEST123" for k in params}
             base_data = {k: "TEST123" for k in params}
             
@@ -431,7 +437,7 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                                     pass
                                 else:
                                     # Hay indicadores de que se intentó hacer la petición
-                                    key = f"{base}?{param}={payload}"
+                                    key = f"{base}|{param}"
                                     with lock:
                                         if key not in seen_urls:
                                             seen_urls.add(key)
@@ -442,10 +448,11 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                                             
                                             urls_vulnerables.append(f"{base}?{param}={quote(payload)}")
                                             found.append(key)
+                                            vuln_manager.mark_as_exploited(base, param)
                                             break
                             else:
                                 # El payload no está solo en atributos HTML, es más probable SSRF
-                                key = f"{base}?{param}={payload}"
+                                key = f"{base}|{param}"
                                 with lock:
                                     if key not in seen_urls:
                                         seen_urls.add(key)
@@ -456,10 +463,11 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                                         
                                         urls_vulnerables.append(f"{base}?{param}={quote(payload)}")
                                         found.append(key)
+                                        vuln_manager.mark_as_exploited(base, param)
                                         break
                         else:
                             # Para otros parámetros, aplicar validación normal
-                            key = f"{base}?{param}={payload}"
+                            key = f"{base}|{param}"
                             with lock:
                                 if key not in seen_urls:
                                     seen_urls.add(key)
@@ -470,6 +478,7 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                                     
                                     urls_vulnerables.append(f"{base}?{param}={quote(payload)}")
                                     found.append(key)
+                                    vuln_manager.mark_as_exploited(base, param)
                                     break
                 elif r.status_code in [403, 429, 451, 503]:
                     # Ignorar respuestas de bloqueo - NO son vulnerabilidades válidas
@@ -490,7 +499,7 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                     
                     # Solo marcar como TIME-BASED si el payload puede causar delay real
                     if any(ind in payload_lower for ind in delay_indicators):
-                        key = f"{base}?{param}={quote(payload)}"
+                        key = f"{base}|{param}"
                         with lock:
                             if key not in seen_urls:
                                 seen_urls.add(key)
@@ -501,6 +510,7 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                                 
                                 urls_vulnerables.append(f"{base}?{param}={quote(payload)}")
                                 found.append(key)
+                                vuln_manager.mark_as_exploited(base, param)
                                 break
             except requests.exceptions.Timeout:
                 pass
@@ -529,6 +539,12 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
         for param in params:
             if param.lower() not in ssrf_params:
                 continue
+
+            if vuln_manager.should_skip_url(base, param):
+                with lock:
+                    current += 1
+                    update_progress(current, total_tasks)
+                return
 
             data = {k: payload if k == param else "TEST123" for k in params}
             base_data = {k: "TEST123" for k in params}
@@ -588,7 +604,7 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                                     # Probablemente es solo una redirección, no SSRF real
                                     pass
                                 else:
-                                    key = f"{base}?{param}={payload}"
+                                    key = f"{base}|{param}"
                                     with lock:
                                         if key not in seen_urls:
                                             seen_urls.add(key)
@@ -599,9 +615,10 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                                             
                                             urls_vulnerables.append(f"{base}?{param}={quote(payload)}")
                                             found.append(key)
+                                            vuln_manager.mark_as_exploited(base, param)
                                             break
                             else:
-                                key = f"{base}?{param}={payload}"
+                                key = f"{base}|{param}"
                                 with lock:
                                     if key not in seen_urls:
                                         seen_urls.add(key)
@@ -612,9 +629,10 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                                         
                                         urls_vulnerables.append(f"{base}?{param}={quote(payload)}")
                                         found.append(key)
+                                        vuln_manager.mark_as_exploited(base, param)
                                         break
                         else:
-                            key = f"{base}?{param}={payload}"
+                            key = f"{base}|{param}"
                             with lock:
                                 if key not in seen_urls:
                                     seen_urls.add(key)
@@ -625,6 +643,7 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                                     
                                     urls_vulnerables.append(f"{base}?{param}={quote(payload)}")
                                     found.append(key)
+                                    vuln_manager.mark_as_exploited(base, param)
                                     break
                 elif r.status_code in [403, 429, 451, 503]:
                     # Ignorar respuestas de bloqueo - NO son vulnerabilidades válidas
@@ -645,7 +664,7 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                     
                     # Solo marcar como TIME-BASED si el payload puede causar delay real
                     if any(ind in payload_lower for ind in delay_indicators):
-                        key = f"{base}?{param}={payload}"
+                        key = f"{base}|{param}"
                         with lock:
                             if key not in seen_urls:
                                 seen_urls.add(key)
@@ -656,6 +675,7 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                                 
                                 urls_vulnerables.append(f"{base}?{param}={quote(payload)}")
                                 found.append(key)
+                                vuln_manager.mark_as_exploited(base, param)
                                 break
             except requests.exceptions.Timeout:
                 pass
@@ -696,6 +716,9 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                     continue
 
                 target = urljoin(url, action)
+                form_param = list(data.keys())[0]
+                if any(vuln_manager.should_skip_url(target, p) for p in data):
+                    continue
                 if method == "post":
                     res = requests.post(target, data=data, headers=headers, timeout=5)
                 else:
@@ -711,9 +734,7 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                         and abs(len(res.text)) > 50
                     ):
                         # Verificación adicional para formularios
-                        import re
                         redirect_params = ["continue", "redirect", "return", "next", "callback"]
-                        form_param = list(data.keys())[0] if data else None
                         
                         if form_param and form_param.lower() in redirect_params:
                             # Verificar que no sea solo una redirección HTML
@@ -723,7 +744,7 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                                     pass
                                 else:
                                     with lock:
-                                        key = f"{target} {data}"
+                                        key = f"{target}|{form_param}"
                                         if key not in seen_urls:
                                             seen_urls.add(key)
                                             with stdout_lock:
@@ -734,9 +755,10 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                                             
                                             urls_vulnerables.append(f"{target}")
                                             found.append(key)
+                                            vuln_manager.mark_as_exploited(target, form_param)
                             else:
                                 with lock:
-                                    key = f"{target} {data}"
+                                    key = f"{target}|{form_param}"
                                     if key not in seen_urls:
                                         seen_urls.add(key)
                                         with stdout_lock:
@@ -747,9 +769,10 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                                         
                                         urls_vulnerables.append(f"{target}")
                                         found.append(key)
+                                        vuln_manager.mark_as_exploited(target, form_param)
                         else:
                             with lock:
-                                key = f"{target} {data}"
+                                key = f"{target}|{form_param}"
                                 if key not in seen_urls:
                                     seen_urls.add(key)
                                     with stdout_lock:
@@ -760,6 +783,7 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
                                     
                                     urls_vulnerables.append(f"{target}")
                                     found.append(key)
+                                    vuln_manager.mark_as_exploited(target, form_param)
                 elif res.status_code in [403, 429, 451, 503]:
                     # Ignorar respuestas de bloqueo - NO son vulnerabilidades válidas
                     # 403: Forbidden (WAF bloqueando)

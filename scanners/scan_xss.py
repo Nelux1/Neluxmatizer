@@ -361,11 +361,37 @@ def _dom_xss_batch(
                                     dialog_hit = any(_DOM_XSS_MARKER in m for m in dialog_history)
                                     # Detectar via console.log (Angular/React no bloquean console)
                                     console_hit = any(_DOM_XSS_MARKER in m for m in console_history)
-                                    # Detectar via DOM — buscar el marker en el HTML renderizado
+                                    # Detectar via DOM — buscar el marker en contexto ejecutable
+                                    # NO basta con innerHTML.includes(): el marker puede estar
+                                    # en un href/RetURL y NO ejecutarse. Solo contar si:
+                                    #  1. Aparece dentro de un <script> (JS directo)
+                                    #  2. Aparece como value de un event handler (onclick, onerror, etc.)
+                                    #  3. Aparece en un javascript: URI
                                     try:
-                                        dom_hit = page.evaluate(
-                                            f"() => document.documentElement.innerHTML.includes('{_DOM_XSS_MARKER}')"
-                                        ) if not dialog_hit and not console_hit else False
+                                        dom_hit = page.evaluate(f"""() => {{
+                                            const m = '{_DOM_XSS_MARKER}';
+                                            // 1. Dentro de <script>
+                                            const scripts = document.querySelectorAll('script');
+                                            for (const s of scripts) {{
+                                                if (s.textContent && s.textContent.includes(m)) return true;
+                                            }}
+                                            // 2. En event handler attributes
+                                            const allEls = document.querySelectorAll('*');
+                                            for (const el of allEls) {{
+                                                for (const attr of el.attributes) {{
+                                                    if (attr.name.toLowerCase().startsWith('on') && attr.value.includes(m)) return true;
+                                                }}
+                                            }}
+                                            // 3. En javascript: URIs (href, src, action)
+                                            const linkAttrs = ['href', 'src', 'action', 'formaction', 'data', 'poster', 'background'];
+                                            for (const el of allEls) {{
+                                                for (const a of linkAttrs) {{
+                                                    const v = el.getAttribute(a);
+                                                    if (v && v.toLowerCase().includes('javascript:') && v.includes(m)) return true;
+                                                }}
+                                            }}
+                                            return false;
+                                        }}""") if not dialog_hit and not console_hit else False
                                     except Exception:
                                         dom_hit = False
 
@@ -402,6 +428,83 @@ def _dom_xss_batch(
     return results
 
 
+def _is_payload_in_executable_context(html_text: str, payload: str) -> bool:
+    """
+    Verifica que el payload esté en un contexto ejecutable dentro del HTML.
+    Retorna True solo si el payload aparece en un lugar donde el navegador lo ejecutaría.
+    
+    Contextos NO ejecutivos (falsos positivos):
+    - Dentro de comentarios HTML: <!-- ... -->
+    - HTML-entity encoded: &lt;script&gt;
+    - Como contenido de <script> sin breakout (string literal)
+    - Como atributo data-* o value sin escape de comillas
+    - En mensajes de error / logs embebidos en el HTML
+    - Puro JS syntax en HTML body (solo ejecuta dentro de <script>)
+    """
+    import html as _html
+
+    # 1. Eliminar bloques <script> y <style> del análisis
+    stripped = re.sub(r'<script[^>]*>.*?</script>', '', html_text, flags=re.DOTALL | re.IGNORECASE)
+    stripped = re.sub(r'<style[^>]*>.*?</style>', '', stripped, flags=re.DOTALL | re.IGNORECASE)
+
+    # 2. Eliminar comentarios HTML
+    stripped = re.sub(r'<!--.*?-->', '', stripped, flags=re.DOTALL)
+
+    # 3. Verificar si el payload está HTML-encoded (falso positivo)
+    encoded_variants = [
+        _html.escape(payload),
+        _html.escape(payload, quote=True),
+        payload.replace('<', '&lt;').replace('>', '&gt;'),
+        payload.replace('<', '&#60;').replace('>', '&#62;'),
+    ]
+    for ev in encoded_variants:
+        if ev in stripped and ev != payload:
+            if payload not in stripped:
+                return False
+
+    # 4. Verificar reflexión directa del payload en el body HTML (fuera de scripts)
+    if payload not in stripped:
+        # También verificar con decodificación HTML
+        decoded = _html.unescape(payload)
+        if decoded != payload and decoded in stripped:
+            pass  # continuar con checks de abajo
+        else:
+            return False
+
+    # ── El payload APARECE en el HTML fuera de scripts/comentarios ──
+    # Ahora verificar que sea un contexto donde un browser lo ejecutaría
+    
+    # 5. Si es un tag HTML (<img, <svg, <script, <iframe, <details, etc.)
+    #    → es ejecutable en el body
+    html_tag_pattern = re.compile(r'<\s*(?:img|svg|script|iframe|details|video|audio|embed|object|form|input|a|marquee|math|foreignobject)\b', re.IGNORECASE)
+    if html_tag_pattern.search(payload):
+        return True
+
+    # 6. Si es attribute injection (comienza con " o ' y tiene event handler)
+    if payload and payload[0] in ('"', "'"):
+        # Patrón clásico: " onmouseover="alert(1)" x="
+        event_handler = re.search(r'\bon\w+\s*=', payload, re.IGNORECASE)
+        if event_handler:
+            return True
+        # O el payload cierra un atributo y abre tag: "><img src=x onerror=...>
+        if payload.startswith('"') and '<' in payload:
+            return True
+        if payload.startswith("'") and '<' in payload:
+            return True
+
+    # 7. Si es javascript: URI scheme en href
+    if re.match(r'^["\']?javascript\s*:', payload, re.IGNORECASE):
+        return True
+
+    # 8. Si es template injection ({{...}})
+    if '{{' in payload and '}}' in payload:
+        return True
+
+    # 9. Puro JS syntax en body HTML NO es ejecutable
+    #    (";alert(1)//, ';alert(1)//, `;alert(1)//) solo ejecuta dentro de <script>
+    return False
+
+
 def is_xss_response(text, payload, context: str = None):
     """Validación estricta para detectar XSS real, evitando falsos positivos comunes."""
 
@@ -424,34 +527,53 @@ def is_xss_response(text, payload, context: str = None):
     #    Si aparece en el HTML fuera de script (ej: <p>Resultado: ";alert(1)//</p>),
     #    el XSS no ejecuta → falso positivo.
     # 2. La comilla inicial NO debe estar backslash-escapada (\";alert(1)// no ejecuta).
-    if context == "js_string" or (payload and payload[:1] in ('"', "'") and "alert" in payload):
+    if context == "js_string":
         candidates = [payload, _html.unescape(payload)]
         for candidate in candidates:
-            # Verificar que el payload esté dentro de al menos un bloque <script>
             script_blocks = re.findall(r'<script[^>]*>(.*?)</script>', text, re.DOTALL | re.IGNORECASE)
             in_script = any(candidate in block for block in script_blocks)
             if not in_script:
-                continue  # solo aparece en HTML body, no ejecutable
-            # Verificar que la comilla no esté backslash-escapada
+                continue
             escaped_variant = "\\" + candidate
             for block in script_blocks:
                 if candidate not in block:
                     continue
                 if escaped_variant in block and candidate not in block.replace(escaped_variant, ""):
-                    continue  # comilla escapada en este bloque
-                return True  # payload sin escapar dentro de <script>
+                    continue
+                return True
         return False
 
-    # Caso general: reflejo exacto del payload
-    if payload in text:
-        return True
+    # Si no se conoce el contexto, intentar js_string primero (si el payload parece serlo)
+    # y si falla, caer al check general de contexto ejecutable.
+    _looks_like_js_breakout = (
+        payload and payload[:1] in ('"', "'") and
+        ("alert" in payload or "confirm" in payload or "prompt" in payload) and
+        ('//' in payload or '</script>' in payload.lower())
+    )
+    if context is None and _looks_like_js_breakout:
+        candidates = [payload, _html.unescape(payload)]
+        js_confirmed = False
+        for candidate in candidates:
+            script_blocks = re.findall(r'<script[^>]*>(.*?)</script>', text, re.DOTALL | re.IGNORECASE)
+            in_script = any(candidate in block for block in script_blocks)
+            if not in_script:
+                continue
+            escaped_variant = "\\" + candidate
+            for block in script_blocks:
+                if candidate not in block:
+                    continue
+                if escaped_variant in block and candidate not in block.replace(escaped_variant, ""):
+                    continue
+                js_confirmed = True
+                break
+            if js_confirmed:
+                break
+        if js_confirmed:
+            return True
+        # No confirmado en script → continuar con check general de contexto ejecutable
 
-    decoded_payload = _html.unescape(payload)
-    if decoded_payload in text:
-        return True
-
-    # Reflejo dentro de comillas en atributo HTML
-    if f'"{payload}"' in text or f"'{payload}'" in text:
+    # ── Verificar que el payload esté en contexto ejecutable ──
+    if _is_payload_in_executable_context(text, payload):
         return True
 
     return False
@@ -927,8 +1049,12 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
                 full_url = urljoin(url, action) if action else url
 
                 # URL normalizada para dedup: sin tracking params
-                # Evita reportar N veces la misma form en páginas con diferentes UTM params
                 norm_url = _strip_tracking_params(full_url)
+                form_base = f"{urlparse(norm_url).scheme}://{urlparse(norm_url).netloc}{urlparse(norm_url).path}"
+
+                # Saltar si este endpoint ya fue explotado
+                if vuln_manager.should_skip_url(form_base, base_url_only=True):
+                    continue
 
                 # Cache de baseline para formularios
                 baseline_key = f"{method}-{norm_url}-{','.join(data.keys())}"
@@ -966,20 +1092,33 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
                 ban.record(form_domain, res.status_code, res, full_url)
 
                 def _report_xss_form(winning_payload, winning_data, label="FORM"):
-                    key = f"{norm_url}|{','.join(sorted(winning_data.keys()))}|{winning_payload}"
+                    form_param_key = ','.join(sorted(winning_data.keys()))
+                    _parsed = urlparse(norm_url)
+                    form_base = f"{_parsed.scheme}://{_parsed.netloc}{_parsed.path.lower()}"
+                    dedup_key = f"{form_base}|{form_param_key}"
                     with lock:
-                        if key in vuln_set:
+                        if dedup_key in vuln_set:
                             return False
-                        vuln_set.add(key)
+                        vuln_set.add(dedup_key)
+                    # Marcar en vuln_manager para que otros scanners lo skippeen
+                    for p_name in winning_data:
+                        vuln_manager.mark_as_exploited(form_base, p_name)
+                    vuln_manager.mark_as_exploited(form_base, base_url_only=True)
                     with stdout_lock:
                         encoded_data = {k: urllib.parse.quote_plus(v) for k, v in winning_data.items()}
                         print_vulnerability(f"\033[1;32m[{label}] [VULNERABLE]\033[0m {norm_url}" + "\033[1;32m ==> \033[0m" + f"{encoded_data}")
-                    entry = f"{norm_url} => {winning_data}"
+                    # Para GET: URL = form_base?param=payload (para que el PoC abra la URL correcta)
+                    # Para POST: URL = form_base (payload va en el body del form)
+                    if method == "get":
+                        qs = urllib.parse.urlencode({k: winning_payload for k in winning_data})
+                        entry_url = f"{form_base}?{qs}"
+                    else:
+                        entry_url = form_base
+                    entry = f"{method.upper()}|{entry_url} => {winning_data}"
                     if label != "FORM":
                         entry += f"|||BYPASS_TECHNIQUE:{label}|||BYPASS_ORIGINAL:{quote(payload)}"
                     urls_vulnerables.append(entry)
                     return True
-                    return False
 
                 # ── CAPA 1: detección directa ──────────────────────────────
                 if res.status_code == 200 and is_xss_response(res.text, payload) and res.text != baseline:

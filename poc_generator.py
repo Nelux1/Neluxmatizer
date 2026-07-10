@@ -1734,11 +1734,17 @@ class PoCGenerator:
             json_field = None
             
             # Si es un formulario, extraer datos
+            # Formato: "METHOD|url => {data}" (GET|... o POST|...)
             if ' => ' in vuln_url:
-                method = "POST"
-                url_part = vuln_url.split(' => ')[0]
-                url = url_part.split()[0]
+                raw_part = vuln_url.split(' => ')[0]
                 form_part = vuln_url.split(' => ')[1]
+                # Detectar prefijo de método: GET|url o POST|url
+                if '|' in raw_part:
+                    _prefix, url = raw_part.split('|', 1)
+                    method = _prefix.strip().upper()
+                else:
+                    url = raw_part.split()[0]
+                    method = "POST"
                 try:
                     import ast
                     form_data = ast.literal_eval(form_part)
@@ -1870,7 +1876,7 @@ class PoCGenerator:
     </div>
     
     <div style="text-align: center; margin: 20px 0;">
-        <button class="button" onclick="openInNewTab()" id="openBtn" disabled>🔗 Open in New Tab (XSS will execute)</button>
+        <button class="button" onclick="openInNewTab()" id="openBtn" disabled>🔗 Open in New Tab</button>
         <button class="button" onclick="copyUrl()" id="copyBtn" disabled>📋 Copy cURL</button>
         <button class="button" onclick="showAnalysis()">🔍 Show Analysis</button>
         <button class="button" onclick="showDetails()">📊 Show Details</button>
@@ -1878,7 +1884,7 @@ class PoCGenerator:
     
     <div class="result" id="result">
         Select a vulnerability from the dropdown above to start testing...<br><br>
-        <strong>Note:</strong> XSS tests may be blocked by browser security. Use the "Open in New Tab" button to test manually!
+        <strong>Note:</strong> If the popup is blocked, copy the URL and open it manually. Confirm that the alert dialog fires to verify the vulnerability.
     </div>
     
     <div id="analysis" class="vuln-info" style="display: none;">
@@ -2122,9 +2128,8 @@ class PoCGenerator:
                     parts.push(encodeURIComponent(name) + '=' + encodeURIComponent(val));
                 }}
                 return "curl -sk -X POST '" + url + "' --data '" + parts.join('&') + "'";
-            }} else {{
-                return "curl -sk '" + url + "'";
             }}
+            return "curl -sk '" + url + "'";
         }}
 
         function openInNewTab() {{
@@ -2133,13 +2138,13 @@ class PoCGenerator:
             const resultDiv = document.getElementById('result');
             const decodedPayload = atob(selectedVuln.payload);
 
-            // Mostrar info usando escHtml para que el payload no ejecute en el PoC
             resultDiv.innerHTML =
                 '🚀 <strong>Opening vulnerable URL in new tab...</strong><br><br>' +
                 '<strong>URL:</strong> ' + escHtml(selectedVuln.url) + '<br>' +
                 '<strong>Method:</strong> ' + escHtml(selectedVuln.method) + '<br>' +
                 '<strong>Payload:</strong> <code>' + escHtml(decodedPayload) + '</code><br><br>' +
-                '⚠️ <strong>Warning:</strong> This will open the actual vulnerable URL with the XSS payload!';
+                '⚠️ <strong>Verify:</strong> If the alert dialog fires, the XSS is confirmed. ' +
+                'If no alert appears, this may be a false positive (payload reflected but not executed).';
             resultDiv.style.borderColor = '#e74c3c';
 
             if (selectedVuln.method === 'POST') {{
@@ -2149,7 +2154,6 @@ class PoCGenerator:
                 form.target = '_blank';
                 form.style.display = 'none';
 
-                // Usar los campos reales de form_data en lugar de un nombre hardcodeado
                 if (selectedVuln.form_data && Object.keys(selectedVuln.form_data).length > 0) {{
                     for (const [name, encodedValue] of Object.entries(selectedVuln.form_data)) {{
                         const input = document.createElement('input');
@@ -2170,8 +2174,13 @@ class PoCGenerator:
                 form.submit();
                 document.body.removeChild(form);
             }} else {{
-                // Para GET la URL ya contiene el payload en sus parámetros
-                window.open(selectedVuln.url, '_blank');
+                const w = window.open(selectedVuln.url, '_blank');
+                if (!w || w.closed || typeof w.closed === 'undefined') {{
+                    resultDiv.innerHTML +=
+                        '<br><br>🚫 <strong>Popup blocked!</strong> Copy the URL below and open it manually:<br>' +
+                        '<code style="word-break:break-all;background:#2c3e50;color:#ecf0f1;padding:8px;display:block;margin-top:8px;border-radius:4px;">' +
+                        escHtml(selectedVuln.url) + '</code>';
+                }}
             }}
         }}
 
