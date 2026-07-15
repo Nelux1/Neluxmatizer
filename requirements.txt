@@ -24,7 +24,7 @@ webdriver-manager>=3.8.0
 playwright>=1.40.0
 
 # Image processing for screenshots
-Pillow>=8.3.0
+Pillow>=12.3.0
 
 # Concurrency and threading (built-in with Python 3.2+)
 # concurrent.futures is part of the standard library
@@ -71,3 +71,4 @@ Pillow>=8.3.0
 #
 # Full install (recommended): entire file — includes selenium + Pillow for PoCs.
 # pip3 install -r requirements.txt
+soupsieve>=2.8.4 # not directly required, pinned by Snyk to avoid a vulnerability
