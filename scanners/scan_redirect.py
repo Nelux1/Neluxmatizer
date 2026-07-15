@@ -56,8 +56,12 @@ def get_base_domain(netloc):
     parts = host.split('.')
     return '.'.join(parts[-2:]) if len(parts) >= 2 else host
 
-def is_redirect_vulnerable(location, base_url, injected_value):
+def is_redirect_vulnerable(location, base_url, injected_value, status_code=None):
     if not location:
+        return False
+
+    # Debe ser una respuesta de redirección real (3xx)
+    if status_code is not None and not (300 <= status_code < 400):
         return False
 
     parsed_location = urlparse(location)
@@ -164,7 +168,7 @@ def redirect(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, ra
                     location = resp.headers.get("Location", "")
 
                     if (
-                        is_redirect_vulnerable(location, base, payload)
+                        is_redirect_vulnerable(location, base, payload, resp.status_code)
                         and location != baseline_location
                     ):
                         # Verificar si ya se explotó esta combinación específica
@@ -250,7 +254,7 @@ def redirect(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, ra
                     location = resp.headers.get("Location", "")
 
                     if (
-                        is_redirect_vulnerable(location, base, payload)
+                        is_redirect_vulnerable(location, base, payload, resp.status_code)
                         and location != baseline_location
                     ):
                         # Verificar si ya se explotó esta combinación específica

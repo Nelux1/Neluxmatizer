@@ -471,14 +471,26 @@ def _is_payload_in_executable_context(html_text: str, payload: str) -> bool:
         else:
             return False
 
-    # ── El payload APARECE en el HTML fuera de scripts/comentarios ──
-    # Ahora verificar que sea un contexto donde un browser lo ejecutaría
-    
     # 5. Si es un tag HTML (<img, <svg, <script, <iframe, <details, etc.)
-    #    → es ejecutable en el body
+    #    Verificar que el payload con el tag aparece RAW (no encoded) en el HTML
+    #    Y que NO está encerrado dentro de un atributo entre comillas (value="<img...>")
+    #    porque en ese caso el browser lo escapa y no ejecuta.
     html_tag_pattern = re.compile(r'<\s*(?:img|svg|script|iframe|details|video|audio|embed|object|form|input|a|marquee|math|foreignobject)\b', re.IGNORECASE)
-    if html_tag_pattern.search(payload):
-        return True
+    if html_tag_pattern.search(payload) and payload in stripped:
+        # Buscar si el payload está dentro de un valor de atributo (FP frecuente)
+        # Patrón: =("|')...payload...("|') — el payload queda encerrado, no ejecuta
+        attr_value_pattern = re.compile(
+            r'=\s*["\'][^"\']*' + re.escape(payload[:20]) + r'[^"\']*["\']',
+            re.IGNORECASE | re.DOTALL
+        )
+        if not attr_value_pattern.search(stripped):
+            return True
+        # También puede no estar en atributo pero igualmente aparecer en el DOM
+        # crudo como texto (ej: en un <p> o <div>) → también ejecutable
+        # Verificar que hay al menos una aparición fuera de atributo
+        outside_attr = re.sub(r'(?:=\s*["\'][^"\']*["\']|=\s*[^\s>]+)', '', stripped)
+        if payload in outside_attr:
+            return True
 
     # 6. Si es attribute injection (comienza con " o ' y tiene event handler)
     if payload and payload[0] in ('"', "'"):

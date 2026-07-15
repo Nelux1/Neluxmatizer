@@ -2190,7 +2190,7 @@ class PoCGenerator:
             const curlCmd = buildCurl();
             const decodedPayload = atob(selectedVuln.payload);
 
-            navigator.clipboard.writeText(curlCmd).then(function() {{
+            const _showCopied = function() {{
                 const resultDiv = document.getElementById('result');
                 resultDiv.innerHTML =
                     '📋 <strong>cURL copied to clipboard!</strong><br><br>' +
@@ -2198,8 +2198,20 @@ class PoCGenerator:
                     '<code style="word-break:break-all;">' + escHtml(curlCmd) + '</code><br><br>' +
                     '<strong>Payload:</strong> <code>' + escHtml(decodedPayload) + '</code>';
                 resultDiv.style.borderColor = '#27ae60';
-            }}).catch(function(err) {{
-                console.error('Could not copy text: ', err);
+            }};
+
+            navigator.clipboard.writeText(curlCmd).then(_showCopied).catch(function() {{
+                try {{
+                    const ta = document.createElement('textarea');
+                    ta.value = curlCmd;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    _showCopied();
+                }} catch(e) {{
+                    alert('No se pudo copiar automáticamente. Seleccioná manualmente:\n\n' + curlCmd);
+                }}
             }});
         }}
     </script>
@@ -3176,13 +3188,44 @@ class PoCGenerator:
             }}
         }}
         
+        function buildCurl(vuln) {{
+            if (!vuln) return '';
+            if (vuln.method === 'HEADER-GET') {{
+                const hdr = vuln.header_name || 'User-Agent';
+                const val = vuln.payload || '';
+                return "curl -sk '" + vuln.url + "' -H '" + hdr + ": " + val + "'";
+            }}
+            if (vuln.method === 'JSON-POST') {{
+                const field = vuln.json_field || 'param';
+                const body = JSON.stringify({{[field]: vuln.payload || ''}});
+                return "curl -sk -X POST '" + vuln.url + "' -H 'Content-Type: application/json' -d '" + body + "'";
+            }}
+            if (vuln.method === 'POST' && vuln.form_data && Object.keys(vuln.form_data).length > 0) {{
+                const parts = [];
+                for (const [name, val] of Object.entries(vuln.form_data)) {{
+                    parts.push(encodeURIComponent(name) + '=' + encodeURIComponent(val));
+                }}
+                return "curl -sk -X POST '" + vuln.url + "' --data '" + parts.join('&') + "'";
+            }}
+            return "curl -sk '" + vuln.url + "'";
+        }}
+
         function copyUrl() {{
             const select = document.getElementById('vulnSelect');
             if (select.value !== '') {{
                 const vulnIndex = parseInt(select.value);
                 const vuln = vulnerabilities[vulnIndex];
-                navigator.clipboard.writeText(vuln.url).then(() => {{
-                    alert('URL copied to clipboard!');
+                const curlCmd = buildCurl(vuln);
+                navigator.clipboard.writeText(curlCmd).then(() => {{
+                    alert('cURL command copied to clipboard!');
+                }}).catch(() => {{
+                    const ta = document.createElement('textarea');
+                    ta.value = curlCmd;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    alert('cURL command copied to clipboard!');
                 }});
             }}
         }}
@@ -5045,209 +5088,6 @@ class PoCGenerator:
             'html_path': html_path,
             'html_filename': html_filename,
             'screenshot_path': None,
-            'screenshot_filename': None
-        }
-    
-    def generate_redirect_poc_old(self, target_url, method="GET", screenshot=False):
-        """Genera PoC para Open Redirect"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Crear un hash único basado en la URL para evitar sobrescribir PoCs
-        import hashlib
-        url_hash = hashlib.md5(target_url.encode()).hexdigest()[:8]
-    
-    def generate_redirect_poc_old(self, target_url, method="GET", screenshot=False):
-        """Genera PoC para Open Redirect"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Crear un hash único basado en la URL para evitar sobrescribir PoCs
-        import hashlib
-        url_hash = hashlib.md5(target_url.encode()).hexdigest()[:8]
-        
-        html_content = f"""
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Open Redirect PoC - {target_url}</title>
-    <style>
-        body {{ font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }}
-        .header {{ background: #f39c12; color: white; padding: 20px; border-radius: 5px; text-align: center; }}
-        .url-box {{ background: white; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 5px solid #f39c12; }}
-        .button {{ background: #3498db; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }}
-        .payload {{ background: #2c3e50; color: #ecf0f1; padding: 15px; margin: 15px 0; border-radius: 5px; font-family: monospace; }}
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>🚨 Open Redirect PoC</h1>
-        <p>Target: <strong>{html.escape(target_url)}</strong></p>
-        <p>Method: <strong>{method}</strong></p>
-    </div>
-    
-    <div class="url-box">
-        <strong>Vulnerable URL:</strong><br>
-        {html.escape(target_url)}
-    </div>
-    
-    <div class="payload">
-        <strong>Open Redirect URLs to test:</strong><br>
-        <select id="payloadSelect" onchange="updatePayload()" style="width: 100%; padding: 8px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px; background: white;">
-            <option value="{target_url.replace('PAYLOAD_PLACEHOLDER', '////google.com/')}">{target_url.replace('PAYLOAD_PLACEHOLDER', '////google.com/')}</option>
-            <option value="{target_url.replace('PAYLOAD_PLACEHOLDER', 'https:///google.com/')}">{target_url.replace('PAYLOAD_PLACEHOLDER', 'https:///google.com/')}</option>
-            <option value="{target_url.replace('PAYLOAD_PLACEHOLDER', '/https:google.com')}">{target_url.replace('PAYLOAD_PLACEHOLDER', '/https:google.com')}</option>
-            <option value="{target_url.replace('PAYLOAD_PLACEHOLDER', 'javascript:alert(\'redirect\')')}">{target_url.replace('PAYLOAD_PLACEHOLDER', 'javascript:alert(\'redirect\')')}</option>
-            <option value="{target_url.replace('PAYLOAD_PLACEHOLDER', '//evil.com')}">{target_url.replace('PAYLOAD_PLACEHOLDER', '//evil.com')}</option>
-            <option value="{target_url.replace('PAYLOAD_PLACEHOLDER', 'https://evil.com')}">{target_url.replace('PAYLOAD_PLACEHOLDER', 'https://evil.com')}</option>
-            <option value="{target_url.replace('PAYLOAD_PLACEHOLDER', 'http://evil.com')}">{target_url.replace('PAYLOAD_PLACEHOLDER', 'http://evil.com')}</option>
-            <option value="{target_url.replace('PAYLOAD_PLACEHOLDER', 'ftp://evil.com')}">{target_url.replace('PAYLOAD_PLACEHOLDER', 'ftp://evil.com')}</option>
-            <option value="{target_url.replace('PAYLOAD_PLACEHOLDER', 'data:text/html,<h1>Evil</h1>')}">{target_url.replace('PAYLOAD_PLACEHOLDER', 'data:text/html,<h1>Evil</h1>')}</option>
-            <option value="{target_url.replace('PAYLOAD_PLACEHOLDER', 'file:///etc/passwd')}">{target_url.replace('PAYLOAD_PLACEHOLDER', 'file:///etc/passwd')}</option>
-        </select>
-        <div id="selectedPayload" style="background: #e74c3c; color: white; padding: 5px; margin: 5px 0; border-radius: 3px; font-family: monospace; word-break: break-all;">
-            <strong>Method:</strong> {method}<br>
-            <strong>URL:</strong> {target_url.replace('PAYLOAD_PLACEHOLDER', '////google.com/')}
-        </div>
-    </div>
-    
-    <button class="button" onclick="openInNewTab()">🔗 Open in New Tab</button>
-    <button class="button" onclick="copyUrl()">📋 Copy URL</button>
-    <button class="button" onclick="copyPayload()">📋 Copy Payload</button>
-    <button class="button" onclick="showAnalysis()">🔍 Show Analysis</button>
-    <button class="button" onclick="showDetails()">📊 Show Details</button>
-    
-    <div id="analysis" class="analysis" style="background: #f8f9fa; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 5px solid #28a745; display: none;">
-        <h3>🔍 Vulnerability Analysis</h3>
-        <p><strong>Vulnerability Type:</strong> Open Redirect</p>
-        <p><strong>Risk Level:</strong> MEDIUM</p>
-        <p><strong>Impact:</strong> Phishing attacks, user redirection to malicious sites</p>
-        <p><strong>Affected Parameter:</strong> Redirect URL parameter</p>
-        <p><strong>Detection Method:</strong> URL manipulation for redirects</p>
-        <p><strong>Common Attack Vectors:</strong></p>
-        <ul>
-            <li>Phishing attacks</li>
-            <li>Social engineering</li>
-            <li>Malicious site redirection</li>
-            <li>Credential harvesting</li>
-        </ul>
-        <div class="warning" style="background: #f8d7da; color: #721c24; padding: 10px; border-radius: 5px; margin: 10px 0;">
-            <strong>⚠️ Warning:</strong> Open Redirects can be used for phishing and social engineering attacks. 
-            Use responsibly and only on systems you have permission to test.
-        </div>
-    </div>
-    
-    <div id="details" class="details" style="background: #fff3cd; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 5px solid #ffc107; display: none; font-family: monospace;">
-        <h3>📊 Open Redirect Details</h3>
-        <p><em>This shows what a successful redirect attack might reveal:</em></p>
-        <div style="background: #2c3e50; color: #ecf0f1; padding: 10px; border-radius: 3px;">
-<strong>Redirect Behavior:</strong>
-• Location header: 302/301 redirects
-• JavaScript redirects: window.location
-• Meta refresh: &lt;meta http-equiv="refresh"&gt;
-• HTTP response: Location header
-
-<strong>Common Payloads:</strong>
-• ////google.com/
-• https:///google.com/
-• /https:google.com
-• javascript:alert('redirect')
-
-<strong>Impact Examples:</strong>
-• Phishing site redirection
-• Credential harvesting
-• Malware distribution
-• Social engineering attacks
-        </div>
-        <p><strong>Note:</strong> This is simulated content. The actual response will depend on the application's redirect handling.</p>
-    </div>
-    
-    <script>
-        function updatePayload() {{
-            const select = document.getElementById('payloadSelect');
-            const display = document.getElementById('selectedPayload');
-            display.innerHTML = '<strong>Method:</strong> {method}<br><strong>URL:</strong> ' + select.value;
-        }}
-        
-        function copyPayload() {{
-            const select = document.getElementById('payloadSelect');
-            const payload = select.value;
-            navigator.clipboard.writeText(payload).then(function() {{
-                const button = event.target;
-                const originalText = button.textContent;
-                button.textContent = '✅ Copied!';
-                setTimeout(() => {{
-                    button.textContent = originalText;
-                }}, 2000);
-            }}).catch(function(err) {{
-                console.error('Error copying payload: ', err);
-                const textArea = document.createElement('textarea');
-                textArea.value = payload;
-                document.body.appendChild(textArea);
-                textArea.select();
-                document.execCommand('copy');
-                document.body.removeChild(textArea);
-            }});
-        }}
-        
-        function showAnalysis() {{
-            const analysis = document.getElementById('analysis');
-            if (analysis.style.display === 'none' || analysis.style.display === '') {{
-                analysis.style.display = 'block';
-            }} else {{
-                analysis.style.display = 'none';
-            }}
-        }}
-        
-        function showDetails() {{
-            const details = document.getElementById('details');
-            if (details.style.display === 'none' || details.style.display === '') {{
-                details.style.display = 'block';
-            }} else {{
-                details.style.display = 'none';
-            }}
-        }}
-        
-        function openInNewTab() {{
-            const select = document.getElementById('payloadSelect');
-            const url = select.value;
-            window.open(url, '_blank');
-        }}
-        
-        function copyUrl() {{
-            const select = document.getElementById('payloadSelect');
-            const url = select.value;
-            navigator.clipboard.writeText(url).then(function() {{
-                // Opcional: mostrar feedback
-                const button = event.target;
-                const originalText = button.textContent;
-                button.textContent = '✅ Copied!';
-                setTimeout(() => {{
-                    button.textContent = originalText;
-                }}, 2000);
-            }}).catch(function(err) {{
-                console.error('Error copying URL: ', err);
-                // Fallback: usar método alternativo
-                const textArea = document.createElement('textarea');
-                textArea.value = url;
-                document.body.appendChild(textArea);
-                textArea.select();
-                document.execCommand('copy');
-                document.body.removeChild(textArea);
-            }});
-        }}
-    </script>
-</body>
-</html>
-        """
-        
-        html_path = os.path.join(self.poc_dir, html_filename)
-        
-        with open(html_path, 'w', encoding='utf-8') as f:
-            f.write(html_content)
-        
-        sys.stdout.write(f"✅ Redirect PoC generado: {html_filename}\n")
-        sys.stdout.flush()
-        return {
-            'html_path': html_path,
-            'screenshot_path': None,
-            'html_filename': html_filename,
             'screenshot_filename': None
         }
     
