@@ -7,7 +7,7 @@ urllib3>=1.26.5
 
 # HTML/XML parsing and web scraping
 beautifulsoup4>=4.9.3
-lxml>=4.6.3
+lxml>=6.1.0
 
 # Terminal and output formatting
 colorama>=0.4.4
@@ -71,3 +71,4 @@ Pillow>=8.3.0
 #
 # Full install (recommended): entire file — includes selenium + Pillow for PoCs.
 # pip3 install -r requirements.txt
+python-dotenv>=1.2.2 # not directly required, pinned by Snyk to avoid a vulnerability
