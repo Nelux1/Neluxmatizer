@@ -2107,11 +2107,56 @@ class PoCGenerator:
                 .replace(/'/g, '&#39;');
         }}
 
+        function safeAtob(b64) {{
+            if (!b64) return '';
+            let s = String(b64).replace(/-/g, '+').replace(/_/g, '/');
+            while (s.length % 4) s += '=';
+            try {{ return atob(s); }} catch (e) {{ return ''; }}
+        }}
+
+        // URL GET con el payload en el query (la que tiene que abrir el botón)
+        function buildGetExploitUrl() {{
+            if (!selectedVuln) return '';
+            const decoded = safeAtob(selectedVuln.payload);
+            if (selectedVuln.form_data && Object.keys(selectedVuln.form_data).length > 0) {{
+                try {{
+                    const u = new URL(selectedVuln.url);
+                    for (const [name, encodedValue] of Object.entries(selectedVuln.form_data)) {{
+                        u.searchParams.set(name, safeAtob(encodedValue));
+                    }}
+                    return u.toString();
+                }} catch (e) {{
+                    return selectedVuln.url;
+                }}
+            }}
+            if (selectedVuln.url && selectedVuln.url.indexOf('?') !== -1) {{
+                return selectedVuln.url;
+            }}
+            if (decoded && selectedVuln.json_field) {{
+                try {{
+                    const u = new URL(selectedVuln.url);
+                    u.searchParams.set(selectedVuln.json_field, decoded);
+                    return u.toString();
+                }} catch (e) {{}}
+            }}
+            return selectedVuln.url;
+        }}
+
+        function openExploitTab(url) {{
+            const a = document.createElement('a');
+            a.href = url;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }}
+
         // Construye el comando curl reproducible según el método y los campos reales
         function buildCurl() {{
             if (!selectedVuln) return '';
-            const url = selectedVuln.url;
-            const decodedPayload = atob(selectedVuln.payload || '');
+            const url = selectedVuln.method === 'GET' ? buildGetExploitUrl() : selectedVuln.url;
+            const decodedPayload = safeAtob(selectedVuln.payload || '');
             if (selectedVuln.method === 'HEADER-GET') {{
                 const hdr = selectedVuln.json_field || 'User-Agent';
                 return "curl -sk '" + url + "' -H '" + hdr + ": " + decodedPayload + "'";
@@ -2136,16 +2181,22 @@ class PoCGenerator:
             if (!selectedVuln) return;
 
             const resultDiv = document.getElementById('result');
-            const decodedPayload = atob(selectedVuln.payload);
+            const decodedPayload = safeAtob(selectedVuln.payload);
+            const exploitUrl = buildGetExploitUrl();
 
             resultDiv.innerHTML =
-                '🚀 <strong>Opening vulnerable URL in new tab...</strong><br><br>' +
-                '<strong>URL:</strong> ' + escHtml(selectedVuln.url) + '<br>' +
+                '🚀 <strong>Opening exploit URL in new tab...</strong><br><br>' +
+                '<strong>URL:</strong> ' + escHtml(exploitUrl) + '<br>' +
                 '<strong>Method:</strong> ' + escHtml(selectedVuln.method) + '<br>' +
                 '<strong>Payload:</strong> <code>' + escHtml(decodedPayload) + '</code><br><br>' +
-                '⚠️ <strong>Verify:</strong> If the alert dialog fires, the XSS is confirmed. ' +
-                'If no alert appears, this may be a false positive (payload reflected but not executed).';
+                '⚠️ <strong>Verify:</strong> If the alert dialog fires, the XSS is confirmed.';
             resultDiv.style.borderColor = '#e74c3c';
+
+            if (selectedVuln.method === 'HEADER-GET' || selectedVuln.method === 'JSON-POST') {{
+                resultDiv.innerHTML +=
+                    '<br><br>This finding needs a custom request (header/JSON). Use <strong>Copy cURL</strong>.';
+                return;
+            }}
 
             if (selectedVuln.method === 'POST') {{
                 const form = document.createElement('form');
@@ -2159,7 +2210,7 @@ class PoCGenerator:
                         const input = document.createElement('input');
                         input.type = 'hidden';
                         input.name = name;
-                        input.value = atob(encodedValue);
+                        input.value = safeAtob(encodedValue);
                         form.appendChild(input);
                     }}
                 }} else {{
@@ -2173,16 +2224,20 @@ class PoCGenerator:
                 document.body.appendChild(form);
                 form.submit();
                 document.body.removeChild(form);
-            }} else {{
-                const w = window.open(selectedVuln.url, '_blank');
-                if (!w || w.closed || typeof w.closed === 'undefined') {{
-                    resultDiv.innerHTML +=
-                        '<br><br>🚫 <strong>Popup blocked!</strong> Copy the URL below and open it manually:<br>' +
-                        '<code style="word-break:break-all;background:#2c3e50;color:#ecf0f1;padding:8px;display:block;margin-top:8px;border-radius:4px;">' +
-                        escHtml(selectedVuln.url) + '</code>';
-                }}
+                return;
             }}
+
+            // GET: abrir la URL ya armada con el payload para que el XSS dispare en el target
+            openExploitTab(exploitUrl);
         }}
+
+        (function initPoc() {{
+            const select = document.getElementById('vulnSelect');
+            if (select && vulnerabilities.length > 0) {{
+                select.value = '0';
+                selectVulnerability();
+            }}
+        }})();
 
         function copyUrl() {{
             if (!selectedVuln) return;
@@ -2210,7 +2265,7 @@ class PoCGenerator:
                     document.body.removeChild(ta);
                     _showCopied();
                 }} catch(e) {{
-                    alert('No se pudo copiar automáticamente. Seleccioná manualmente:\n\n' + curlCmd);
+                    alert('No se pudo copiar automáticamente. Seleccioná manualmente:\\n\\n' + curlCmd);
                 }}
             }});
         }}
@@ -5395,4 +5450,6 @@ class PoCGenerator:
         new_query = urlencode(query_params, doseq=True)
         new_parsed = parsed._replace(query=new_query)
         return urlunparse(new_parsed)
+
+
 
