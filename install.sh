@@ -47,6 +47,41 @@ fi
 
 echo "✅ pip3 detected"
 
+# True if $1 is a venv interpreter (pip works without --user / PEP 668).
+_is_venv_python() {
+    local py="$1"
+    "$py" -c "import sys; raise SystemExit(0 if sys.prefix != sys.base_prefix else 1)" 2>/dev/null
+}
+
+# Playwright can be "installed" and still fail to import: Kali's python3-greenlet
+# often ships only _greenlet.cpython-3XX.so for the default python3. After a
+# distro upgrade the launcher may stay on 3.13 while greenlet is 3.14-only.
+verify_playwright_import() {
+    local py="${1:-python3}"
+    echo "🔎 Verifying Playwright import on: $py"
+    if "$py" -c "from playwright.sync_api import sync_playwright" >/dev/null 2>&1; then
+        echo "   ✅ playwright.sync_api import OK"
+        return 0
+    fi
+
+    echo "   ⚠️  Import failed (typical: python3-greenlet ABI != this interpreter)."
+    echo "   Reinstalling greenlet + playwright for this Python..."
+    if _is_venv_python "$py"; then
+        "$py" -m pip install --force-reinstall "greenlet>=3.0" "playwright>=1.40" || true
+    else
+        "$py" -m pip install --user --force-reinstall "greenlet>=3.0" "playwright>=1.40" || true
+    fi
+
+    if "$py" -c "from playwright.sync_api import sync_playwright" >/dev/null 2>&1; then
+        echo "   ✅ playwright.sync_api import OK after repair"
+        return 0
+    fi
+
+    echo "   ⚠️  Playwright still does not import — headless crawl will be skipped."
+    "$py" -c "from playwright.sync_api import sync_playwright" || true
+    return 1
+}
+
 # Function to install packages
 # $1 = pip invocation (e.g. "pip", "pip3 install --user", "sudo pip3" — deprecated on PEP 668 distros)
 # $2 = python binary for import tests and playwright (default: python3)
@@ -64,6 +99,8 @@ install_packages() {
         "$py_verify" -c "import selenium; import PIL; import tqdm; print('   ✅ selenium + Pillow + tqdm import OK')" || {
             echo "   ⚠️  selenium, Pillow or tqdm import failed — run: pip install -r requirements.txt"
         }
+        echo ""
+        verify_playwright_import "$py_verify"
         echo ""
         echo "🌐 Installing Chromium for Playwright (headless URL discovery)..."
         "$py_verify" -m playwright install chromium || {
@@ -135,12 +172,18 @@ write_neluxmatizer_wrapper() {
     local tmp
     tmp="$(mktemp)"
 
+    # Do NOT readlink -f the interpreter. That unwraps venv/bin/python and
+    # /usr/bin/python3 to /usr/bin/python3.13 — the launcher stays pinned after
+    # Kali upgrades python3, and python3-greenlet no longer matches.
     local python_abs
     if [ -x "$python_ref" ]; then
-        python_abs="$(readlink -f "$python_ref" 2>/dev/null || echo "$python_ref")"
+        if [[ "$python_ref" == /* ]]; then
+            python_abs="$python_ref"
+        else
+            python_abs="$(cd "$(dirname "$python_ref")" && pwd)/$(basename "$python_ref")"
+        fi
     elif command -v "$python_ref" &>/dev/null; then
         python_abs="$(command -v "$python_ref")"
-        python_abs="$(readlink -f "$python_abs" 2>/dev/null || echo "$python_abs")"
     else
         echo "❌ Intérprete Python no encontrado: $python_ref"
         rm -f "$tmp"
@@ -171,6 +214,7 @@ EOF
         mv "$tmp" "$dest"
     fi
     echo "✅ Comando instalado: $dest"
+    verify_playwright_import "$python_abs" || true
 }
 
 # Function to create output directories

@@ -84,6 +84,12 @@ chmod +x neluxmatizer.py
 
 If `playwright install chromium` is skipped or fails, Neluxmatizer prints a **red** warning and continues **without** headless discovery (Wayback, forms, and parameter fuzzing still run).
 
+On Kali, `python3-greenlet` from APT often only matches the default `python3`. If the `neluxmatizer` launcher is pinned to another minor (e.g. 3.13 after a distro upgrade), headless crawl is skipped. `install.sh` reinstalls `greenlet` for the launcher interpreter; to repair an existing install:
+
+```bash
+"$(head -n 6 ~/.local/bin/neluxmatizer | awk '/^exec /{print $2}')" -m pip install --user --force-reinstall greenlet playwright
+```
+
 ### Installation Options
 
 #### Option 1: Automated Installation (Recommended)

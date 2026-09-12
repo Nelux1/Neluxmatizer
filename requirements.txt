@@ -20,7 +20,10 @@ tqdm>=4.62.0
 selenium>=4.0.0
 webdriver-manager>=3.8.0
 
-# Headless Chromium crawl (JS-rendered links) — run after install: playwright install chromium
+# Headless Chromium crawl (JS-rendered links) — run after install: python -m playwright install chromium
+# greenlet is pinned explicitly: Kali's python3-greenlet often ships only the .so for
+# the default python3 (e.g. 3.14). If the launcher stays on 3.13, Playwright imports fail.
+greenlet>=3.0
 playwright>=1.40.0
 
 # Image processing for screenshots

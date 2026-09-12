@@ -162,9 +162,13 @@ def headless_collect_urls(
     try:
         try:
             from playwright.sync_api import sync_playwright
-        except ImportError:
+        except ImportError as e:
+            py = sys.executable or "python3"
             return [], (
-                "paquete 'playwright' no instalado — ejecutá: pip install playwright && playwright install chromium"
+                f"Playwright no importa en {py}: {e}. "
+                f"Repará con el mismo intérprete: "
+                f"{py} -m pip install --user --force-reinstall greenlet playwright && "
+                f"{py} -m playwright install chromium"
             )
 
         seed_url = _ensure_http_scheme(seed_url)
