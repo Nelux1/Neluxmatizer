@@ -54,7 +54,9 @@ _DOM_XSS_URL_LIMIT   = 60    # max URLs testeadas headlessly
 _DOM_XSS_TIMEOUT     = 6000  # ms por navegación (aumentado para SPAs lentas)
 _DOM_XSS_SETTLE      = 1200  # ms post-load para Angular/React (aumentado de 600)
 _DOM_XSS_SPA_SETTLE  = 2500  # ms extra para fragment URLs (SPAs con routing)
-_DOM_XSS_MAX_WORKERS = 4     # instancias paralelas de Chromium
+_DOM_XSS_MAX_WORKERS = 8     # instancias paralelas de Chromium (cada una es un proceso Chromium completo,
+                             # no un thread liviano — subirlo mucho más puede saturar RAM/CPU)
+_DOM_XSS_LOCAL_FAIL_THRESHOLD = 5  # navegaciones fallidas/timeout consecutivas en un dominio → se skippea el resto
 
 # Parámetros que suelen reflejarse en el DOM (mayor prioridad en el batch headless)
 _DOM_XSS_PRIORITY_PARAMS: frozenset = frozenset({
@@ -222,6 +224,12 @@ def _dom_xss_batch(
     except ImportError:
         return []
 
+    try:
+        from scanners.ban_detector import get_ban_detector
+    except ImportError:
+        from ban_detector import get_ban_detector
+    ban = get_ban_detector()
+
     inserted = _prefer_bundled_playwright()
     results = []
 
@@ -232,10 +240,14 @@ def _dom_xss_batch(
             return []
 
         # Filtrar y ordenar: incluir URLs con params en query string O en fragment (#/path?param=)
+        # Descarta también dominios ya marcados como bloqueados (IP ban / WAF) por la fase HTTP,
+        # que corre justo antes de esta — de lo contrario Playwright sigue navegando (timeout
+        # completo × hasta 8 payloads × cada param) contra un dominio que ya sabemos bloqueado.
         candidates = [
             u for u in urls
             if (parse_qs(urlparse(u).query) or _has_fragment_params(u))
             and not _is_static_path(u)
+            and not ban.is_banned(urlparse(u).netloc)
             and f"{urlparse(u).scheme}://{urlparse(u).netloc}{urlparse(u).path}" not in already_found
         ]
         candidates.sort(key=_dom_xss_sort_key)
@@ -254,6 +266,28 @@ def _dom_xss_batch(
         results_lock = threading.Lock()
         progress_lock = threading.Lock()
         done_counter = [0]
+
+        # Blocklist local a esta fase: si un dominio empieza a fallar/timeoutear
+        # de forma consecutiva (WAF que solo aparece bajo carga headless, red caída, etc.)
+        # se deja de testear en lugar de seguir quemando timeouts de 6s por payload.
+        domain_fail_lock = threading.Lock()
+        domain_fail_count: dict = {}
+        domain_local_blocked: set = set()
+
+        def _domain_blocked(domain: str) -> bool:
+            if ban.is_banned(domain):
+                return True
+            with domain_fail_lock:
+                return domain in domain_local_blocked
+
+        def _record_domain_nav_result(domain: str, ok: bool) -> None:
+            with domain_fail_lock:
+                if ok:
+                    domain_fail_count[domain] = 0
+                    return
+                domain_fail_count[domain] = domain_fail_count.get(domain, 0) + 1
+                if domain_fail_count[domain] >= _DOM_XSS_LOCAL_FAIL_THRESHOLD:
+                    domain_local_blocked.add(domain)
 
         def _worker(chunk: list) -> None:
             """Cada worker lanza su propio browser y procesa su chunk."""
@@ -311,6 +345,11 @@ def _dom_xss_batch(
                             parsed = urlparse(url)
                             base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
 
+                            # Dominio ya bloqueado (por la fase HTTP o por fallos consecutivos
+                            # detectados en esta misma fase) → no vale la pena gastar timeouts.
+                            if _domain_blocked(parsed.netloc):
+                                continue
+
                             # Soporte para fragment URLs: /#/path?param=value (SPAs Angular/React)
                             frag = parsed.fragment
                             is_fragment_url = "?" in frag
@@ -327,10 +366,11 @@ def _dom_xss_batch(
                             settle_ms = _DOM_XSS_SPA_SETTLE if is_fragment_url else _DOM_XSS_SETTLE
 
                             vuln_found_for_url = False
+                            abort_url = False
                             for param in qs:
                                 if _is_non_injectable_param(param):
                                     continue
-                                if vuln_found_for_url:
+                                if vuln_found_for_url or abort_url:
                                     break
 
                                 for payload in _DOM_XSS_PAYLOADS:
@@ -354,7 +394,15 @@ def _dom_xss_batch(
                                             timeout=_DOM_XSS_TIMEOUT,
                                         )
                                         page.wait_for_timeout(settle_ms)
+                                        _record_domain_nav_result(parsed.netloc, ok=True)
                                     except Exception:
+                                        _record_domain_nav_result(parsed.netloc, ok=False)
+                                        if _domain_blocked(parsed.netloc):
+                                            # Este dominio acaba de pasar el umbral de fallos
+                                            # consecutivos — abortar el resto de payloads/params
+                                            # de esta URL en vez de seguir timeouteando.
+                                            abort_url = True
+                                            break
                                         continue
 
                                     # Detectar via dialog (alert/confirm/prompt)
