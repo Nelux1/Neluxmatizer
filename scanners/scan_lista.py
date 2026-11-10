@@ -348,6 +348,15 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
     # 🔒 BLOCK HANDLER SYSTEM
     block_handlers = {}  # One handler per URL
     result_savers = {}   # One saver per URL
+    saved_any = False
+
+    def note_output_not_saved():
+        if o and not saved_any:
+            sys.stdout.write(
+                f'\n\033[1;33m[!] Output file not saved ({fname}): '
+                f'no vulnerabilities were found.\033[0m\n'
+            )
+            sys.stdout.flush()
     
     # Initialize handlers for each URL
     for url in urls:
@@ -397,7 +406,8 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
                     except Exception as e:
                         sys.stdout.write(f'\033[1;33m⚠️ Error saving checkpoint: {e}\033[0m\n')
                         sys.stdout.flush()
-                
+
+                note_output_not_saved()
                 sys.exit(0)
         except ImportError:
             pass  # If no interruption module, continue
@@ -432,6 +442,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
                     f"Try rotating your IP or using a proxy before retrying.\033[0m\n"
                 )
                 sys.stdout.flush()
+                note_output_not_saved()
                 sys.exit(1)
         # ────────────────────────────────────────────────────────────────────
 
@@ -622,40 +633,12 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             sys.stdout.write(f'\n\033[1;31m[-] No parameters found for {scope_label}\033[0m\n')
             sys.stdout.flush()
 
-            if o:
-                try:
-                    with open(fname, 'a', encoding='utf-8') as f:
-                        f.write(f"\n[SCAN RESULTS FOR: {u}]\n")
-                        f.write(f"[TIMESTAMP: {time.strftime('%Y-%m-%d %H:%M:%S')}]\n")
-                        f.write(f"[INFO] No parameters found - skipping vulnerability scans\n")
-                        f.write(f"\n{'='*80}\n")
-                        f.write(f"SCAN COMPLETED FOR: {u}\n")
-                        f.write(f"TIMESTAMP: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                        f.write(f"{'='*80}\n\n")
-                except Exception as e:
-                    sys.stdout.write(f'\033[1;33m[⚠️] Warning: Could not write to output file: {e}\033[0m\n')
-                    sys.stdout.flush()
-
             save_checkpoint_for_url(u)
             continue
 
         if not has_param_surface and raw_collected and not (cl or c or hh):
             sys.stdout.write(f'\n\033[1;31m[-] No parameters found for {scope_label}\033[0m\n')
             sys.stdout.flush()
-
-            if o:
-                try:
-                    with open(fname, 'a', encoding='utf-8') as f:
-                        f.write(f"\n[SCAN RESULTS FOR: {u}]\n")
-                        f.write(f"[TIMESTAMP: {time.strftime('%Y-%m-%d %H:%M:%S')}]\n")
-                        f.write(f"[INFO] No GET params/forms; enable -cors and/or -click to probe headers on collected URLs\n")
-                        f.write(f"\n{'='*80}\n")
-                        f.write(f"SCAN COMPLETED FOR: {u}\n")
-                        f.write(f"TIMESTAMP: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                        f.write(f"{'='*80}\n\n")
-                except Exception as e:
-                    sys.stdout.write(f'\033[1;33m[⚠️] Warning: Could not write to output file: {e}\033[0m\n')
-                    sys.stdout.flush()
 
             save_checkpoint_for_url(u)
             continue
@@ -670,8 +653,8 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
                 sys.stdout.write(f'\033[1;31m[🚨] Target {scope_label} is blocked - skipping Clickjacking scan\033[0m\n')
                 sys.stdout.flush()
-                if result_savers[u]:
-                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                if result_savers[u] and result_savers[u].save_partial_results(u, "WAF blocking detected during scan"):
+                    saved_any = True
                 continue
             
             # Use authenticated headers for clickjacking
@@ -696,8 +679,8 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
                 sys.stdout.write(f'\033[1;31m[🚨] Target {scope_label} is blocked - skipping CORS scan\033[0m\n')
                 sys.stdout.flush()
-                if result_savers[u]:
-                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                if result_savers[u] and result_savers[u].save_partial_results(u, "WAF blocking detected during scan"):
+                    saved_any = True
                 continue
             
             # Use authenticated headers for CORS
@@ -713,8 +696,8 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
                 sys.stdout.write(f'\033[1;31m[🚨] Target {scope_label} is blocked - skipping XXE scan\033[0m\n')
                 sys.stdout.flush()
-                if result_savers[u]:
-                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                if result_savers[u] and result_savers[u].save_partial_results(u, "WAF blocking detected during scan"):
+                    saved_any = True
                 continue
             
             wordlist = payloads if payloads else [
@@ -752,8 +735,8 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
                 sys.stdout.write(f'\033[1;31m[🚨] Target {scope_label} is blocked - skipping XSS scan\033[0m\n')
                 sys.stdout.flush()
-                if result_savers[u]:
-                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                if result_savers[u] and result_savers[u].save_partial_results(u, "WAF blocking detected during scan"):
+                    saved_any = True
                 continue
             
             wordlist = payloads if payloads else [
@@ -770,8 +753,8 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
                 sys.stdout.write(f'\033[1;31m[🚨] Target {scope_label} is blocked - skipping LFI scan\033[0m\n')
                 sys.stdout.flush()
-                if result_savers[u]:
-                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                if result_savers[u] and result_savers[u].save_partial_results(u, "WAF blocking detected during scan"):
+                    saved_any = True
                 continue
             
             wordlist = payloads if payloads else [
@@ -794,8 +777,8 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
                 sys.stdout.write(f'\033[1;31m[🚨] Target {scope_label} is blocked - skipping SQLi scan\033[0m\n')
                 sys.stdout.flush()
-                if result_savers[u]:
-                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                if result_savers[u] and result_savers[u].save_partial_results(u, "WAF blocking detected during scan"):
+                    saved_any = True
                 continue
             
             wordlist = payloads if payloads else [
@@ -814,8 +797,8 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
                 sys.stdout.write(f'\033[1;31m[🚨] Target {scope_label} is blocked - skipping RCE scan\033[0m\n')
                 sys.stdout.flush()
-                if result_savers[u]:
-                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                if result_savers[u] and result_savers[u].save_partial_results(u, "WAF blocking detected during scan"):
+                    saved_any = True
                 continue
             
             wordlist = payloads if payloads else [
@@ -844,8 +827,8 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
                 sys.stdout.write(f'\033[1;31m[🚨] Target {scope_label} is blocked - skipping SSRF scan\033[0m\n')
                 sys.stdout.flush()
-                if result_savers[u]:
-                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                if result_savers[u] and result_savers[u].save_partial_results(u, "WAF blocking detected during scan"):
+                    saved_any = True
                 continue
             
             wordlist = payloads if payloads else [
@@ -862,8 +845,8 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
                 sys.stdout.write(f'\033[1;31m[🚨] Target {scope_label} is blocked - skipping Redirect scan\033[0m\n')
                 sys.stdout.flush()
-                if result_savers[u]:
-                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                if result_savers[u] and result_savers[u].save_partial_results(u, "WAF blocking detected during scan"):
+                    saved_any = True
                 continue
             
             wordlist = payloads if payloads else [
@@ -893,8 +876,8 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
                 sys.stdout.write(f'\033[1;31m[🚨] Target {scope_label} is blocked - skipping SSTI scan\033[0m\n')
                 sys.stdout.flush()
-                if result_savers[u]:
-                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                if result_savers[u] and result_savers[u].save_partial_results(u, "WAF blocking detected during scan"):
+                    saved_any = True
                 continue
             
             wordlist = payloads if payloads else [
@@ -910,8 +893,8 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             if BLOCK_HANDLER_AVAILABLE and block_handlers[u] and block_handlers[u].is_target_blocked():
                 sys.stdout.write(f'\033[1;31m[🚨] Target {scope_label} is blocked - skipping CRLF scan\033[0m\n')
                 sys.stdout.flush()
-                if result_savers[u]:
-                    result_savers[u].save_partial_results(u, "WAF blocking detected during scan")
+                if result_savers[u] and result_savers[u].save_partial_results(u, "WAF blocking detected during scan"):
+                    saved_any = True
                 continue
             
             crlf_vulns = crlf(crlf_urip, crlf_urif, [], threads, custom_headers, random_agent)
@@ -928,16 +911,19 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             # Increment block counter
             blocked_urls += 1
             
-            if u in result_savers and result_savers[u]:
-                result_savers[u].save_partial_results(u, f"WAF blocking after {block_handlers[u].block_count} attempts")
-            
+            if u in result_savers and result_savers[u] and result_savers[u].save_partial_results(u, f"WAF blocking after {block_handlers[u].block_count} attempts"):
+                saved_any = True
+
             # If it's the only URL, close the program
             if total_urls == 1:
                 sys.stdout.write(f'\n\033[1;31m🚨 Single target blocked - terminating scan{Style.RESET_ALL}\n')
                 sys.stdout.flush()
-                sys.stdout.write(f'\n\033[1;31m💾 Partial results saved to {fname if o else "output"}{Style.RESET_ALL}\n')
+                if saved_any:
+                    sys.stdout.write(f'\n\033[1;31m💾 Partial results saved to {fname if o else "output"}{Style.RESET_ALL}\n')
+                else:
+                    note_output_not_saved()
                 sys.stdout.flush()
-                if poc:
+                if poc and saved_any:
                     sys.stdout.write(f'\033[1;31m[📋] PoCs generated for discovered vulnerabilities{Style.RESET_ALL}\n')
                     sys.stdout.flush()
                 sys.stdout.write(f'\n\033[1;31m[❌] Scan terminated due to WAF blocking{Style.RESET_ALL}\n')
@@ -958,72 +944,50 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
                 # There was no WAF or it didn't block
                 safe_urls += 1
         
-        # Save output for each URL (append mode)
-        if o:
+        # Save output for each URL only when this target has findings
+        total_vulns = sum(len(vulns) for vulns in vulnerabilities_by_type.values())
+        if o and total_vulns > 0:
             sys.stdout.write(f'\n\033[1;36m💾 Saving results for {scope_label} to {fname}...\033[0m\n')
             sys.stdout.flush()
-            
-            # Check if file exists (resuming from checkpoint) and add separator if needed
+
             file_exists = os.path.exists(fname)
             if file_exists:
-                # Check if last line is not a separator (to avoid duplicate separators)
                 try:
                     with open(fname, 'r', encoding='utf-8') as f:
                         lines = f.readlines()
                         if lines and not lines[-1].strip().startswith('='):
-                            # Last line is not a separator, add resume marker
                             with open(fname, 'a', encoding='utf-8') as f:
                                 f.write(f"\n{'='*80}\n")
                                 f.write(f"RESUMING SCAN FROM CHECKPOINT\n")
                                 f.write(f"TIMESTAMP: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
                                 f.write(f"{'='*80}\n\n")
                 except Exception:
-                    pass  # If we can't read, just continue with append
-            
-            # Count total vulnerabilities
-            total_vulns = sum(len(vulns) for vulns in vulnerabilities_by_type.values())
-            
-            if total_vulns > 0:
-                # Write directly to file in append mode
-                try:
-                    with open(fname, 'a', encoding='utf-8') as f:
-                        f.write(f"\n[SCAN RESULTS FOR: {u}]\n")
-                        f.write(f"[TIMESTAMP: {time.strftime('%Y-%m-%d %H:%M:%S')}]\n")
-                        f.write(f"[TOTAL VULNERABILITIES FOUND: {total_vulns}]\n")
-                        f.write("-" * 60 + "\n")
-                        
-                        # Write vulnerabilities organized by type
-                        for vuln_type, vulns in vulnerabilities_by_type.items():
-                            if vulns:
-                                f.write(f"\n=== {vuln_type} VULNERABILITIES ({len(vulns)} found) ===\n")
-                                for vuln in vulns:
-                                    if isinstance(vuln, str) and vuln.strip():
-                                        f.write(f"{vuln}\n")
-                                f.write("\n")
-                        
-                        f.write("-" * 60 + "\n\n")
-                        
-                except Exception as e:
-                    sys.stdout.write(f'\033[1;33m[⚠️] Warning: Could not write vulnerabilities to output file: {e}\033[0m\n')
-                    sys.stdout.flush()
-            else:
-                # If no vulnerabilities, add message
-                try:
-                    with open(fname, 'a', encoding='utf-8') as f:
-                        f.write(f"[INFO] No vulnerabilities found for {u}\n")
-                except Exception as e:
-                    sys.stdout.write(f'\033[1;33m[⚠️] Warning: Could not write to output file: {e}\033[0m\n')
-                    sys.stdout.flush()
-            
-            # Add separator for next URL
+                    pass
+
             try:
+                out_dir = os.path.dirname(fname)
+                if out_dir and not os.path.exists(out_dir):
+                    os.makedirs(out_dir)
                 with open(fname, 'a', encoding='utf-8') as f:
+                    f.write(f"\n[SCAN RESULTS FOR: {u}]\n")
+                    f.write(f"[TIMESTAMP: {time.strftime('%Y-%m-%d %H:%M:%S')}]\n")
+                    f.write(f"[TOTAL VULNERABILITIES FOUND: {total_vulns}]\n")
+                    f.write("-" * 60 + "\n")
+                    for vuln_type, vulns in vulnerabilities_by_type.items():
+                        if vulns:
+                            f.write(f"\n=== {vuln_type} VULNERABILITIES ({len(vulns)} found) ===\n")
+                            for vuln in vulns:
+                                if isinstance(vuln, str) and vuln.strip():
+                                    f.write(f"{vuln}\n")
+                            f.write("\n")
+                    f.write("-" * 60 + "\n\n")
                     f.write(f"\n{'='*80}\n")
                     f.write(f"SCAN COMPLETED FOR: {u}\n")
                     f.write(f"TIMESTAMP: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
                     f.write(f"{'='*80}\n\n")
+                saved_any = True
             except Exception as e:
-                sys.stdout.write(f'\033[1;33m[⚠️] Warning: Could not add separator to output file: {e}\033[0m\n')
+                sys.stdout.write(f'\033[1;33m[⚠️] Warning: Could not write vulnerabilities to output file: {e}\033[0m\n')
                 sys.stdout.flush()
         
         # 🔍 GENERATE PoCs BY DOMAIN - BEFORE CLEARING VULNERABILITIES
@@ -1097,6 +1061,7 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             sys.stdout.write(f'\033[1;33m[⚠️] Error deleting checkpoint: {e}\033[0m\n')
             sys.stdout.flush()
 
+    note_output_not_saved()
     sys.stdout.write('\033[1;31mCLOSE PROGRAM\033[0m\n')
     sys.stdout.flush()
     sys.exit(0)

@@ -9,7 +9,6 @@ import argparse
 from colorama import Back, Fore, Cursor, Style, init
 from scanners.scan_lista import all_list
 from parametizer.core.headers import parse_headers
-from parametizer.core.save_it import save_output
 from parametizer.interrupt import signal_handler
 import time 
 start_time = time.time()
@@ -217,8 +216,8 @@ parser.add_argument("-ra", "--random-agent",
                     help="Use random User-Agent for all attack requests",
                     action='store_true')
 parser.add_argument("-o",
-                     dest="output", 
-                     help = 'Output file name')
+                     dest="output",
+                     help="Output file name. Written only when vulnerabilities are found.")
 parser.add_argument("-C", "--cookies",
                     dest="cookies",
                     help="Session cookies for continuous authentication (format: 'name1=value1; name2=value2')",
@@ -485,8 +484,12 @@ def selector():
          if args.sql:
            s=True
            all_list(url,c,cl,cr,x,xe,l,s,r,rc,sr,sst,fname,o,urls_vulnerables,threads,wordlist,args.headers,args.random_agent,args.oob_domain,args.poc,args.cookies,args.auth,checkpoint_manager,checkpoint_id,param_endpoints=param_endpoints,hh=hh)
-         if args.output:
-           save_output(urls_vulnerables,fname,l)
+         if args.output and not urls_vulnerables:
+           sys.stdout.write(
+               f'\n\033[1;33m[!] Output file not saved ({fname}): '
+               f'no vulnerabilities were found.\033[0m\n'
+           )
+           sys.stdout.flush()
      
     if os.path.exists(output):
         os.remove(output)

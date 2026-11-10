@@ -283,7 +283,7 @@ class ResultSaver:
         """
         if not self.partial_results:
             print(f"{Fore.YELLOW}[⚠️] No vulnerabilities to save for {target_url}{Style.RESET_ALL}")
-            return
+            return False
         
         try:
             # Crear directorio de output si no existe
@@ -311,9 +311,11 @@ class ResultSaver:
             
             print(f"{Fore.GREEN}[💾] Partial results saved to {self.output_file}{Style.RESET_ALL}")
             print(f"{Fore.GREEN}[📊] Saved {len(self.partial_results)} vulnerabilities{Style.RESET_ALL}")
-            
+            return True
+
         except Exception as e:
             print(f"{Fore.RED}[❌] Error saving partial results: {e}{Style.RESET_ALL}")
+            return False
     
     def clear_partial_results(self):
         """Limpia los resultados parciales (útil para nuevo target)"""
