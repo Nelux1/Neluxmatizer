@@ -4,7 +4,7 @@ from parametizer.bounded_pool import run_threadpool_pending_bounded
 from urllib.parse import urlparse, parse_qs, urljoin, quote
 from bs4 import BeautifulSoup
 from colorama import init, ansi
-from parametizer.progress import update_progress, print_vulnerability
+from parametizer.progress import update_progress, print_vulnerability, start_scan_progress
 from parametizer.core.headers import get_headers
 import urllib3
 import threading
@@ -277,6 +277,7 @@ def ssti(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
     sys.stdout.flush()
 
     total_tasks = (len(urip) * 3 + len(urif) * 2) * len(wordlist)  # GET+POST+JSON (urip) + FORM+JSON (urif)
+    start_scan_progress("SSTI", len(urip) + len(urif), len(wordlist), total_tasks, threads)
     current = 0
     lock = threading.Lock()
     vulnerable_endpoints = set()

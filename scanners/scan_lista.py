@@ -413,18 +413,29 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             pass  # If no interruption module, continue
         
         processed_urls += 1
-        # scope_label: dominio solo si -param; con -u/-l siempre la URL completa (param_endpoints=None)
-        scope_label = _stdout_scope_label(u, param_endpoints)
-        sys.stdout.write(
-            fmt_line("1;36", "[+] Scanning:", f"{scope_label} ({processed_urls}/{total_urls})")
-            + "\n"
-        )
+        # -p/-param: la lista entera es un solo pase. No se nombra el host de la primera línea.
+        if param_endpoints is not None:
+            scope_label = "endpoints"
+            sys.stdout.write(
+                fmt_line("1;36", "[+] Scanning endpoints:", str(len(param_endpoints)))
+                + "\n"
+            )
+            # El handler y el pre-check de ban están atados a la primera URL.
+            # Un bloqueo ahí no debe cortar el resto de la lista.
+            block_handlers[u] = None
+        else:
+            scope_label = _stdout_scope_label(u, param_endpoints)
+            sys.stdout.write(
+                fmt_line("1;36", "[+] Scanning:", f"{scope_label} ({processed_urls}/{total_urls})")
+                + "\n"
+            )
         sys.stdout.flush()
 
         # ── IP BAN PRE-CHECK ────────────────────────────────────────────────
         # Before attacking, verify our IP is not already blocked by the target.
+        # En modo endpoints el ban se decide por host, adentro de cada scanner.
         _ban = get_ban_detector()
-        if _ban.pre_check(u):
+        if param_endpoints is None and _ban.pre_check(u):
             # IP is banned. If scanning a list, skip to the next URL.
             # If this is the only URL, exit with a clear message.
             if total_urls > 1:
@@ -462,29 +473,23 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             sys.stdout.flush()
         
         # 🔒 WAF DETECTION (INFORMATIVE ONLY - DOES NOT BLOCK)
-        try:
-            # Import WAF detector
-            sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            from core.waf_detector import WAFDetector
-            
-            #print(f'\033[1;33m[🔍] Checking WAF protection (informative only)...\033[0m')
-            waf_detector = WAFDetector(u, custom_headers)
-            
-            # Detect WAF silently (informative only, does not block)
-            waf_detector.detect_waf()
-            # Only show when there's NO WAF or when it actually blocks
-            if not waf_detector.waf_detected:
-                sys.stdout.write(f'\033[1;32m[+] No WAF detected\033[0m\n')
+        # En -p el detector solo miraría el primer host y lo presentaría como resultado de toda la lista.
+        if param_endpoints is None:
+            try:
+                sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                from core.waf_detector import WAFDetector
+
+                waf_detector = WAFDetector(u, custom_headers)
+                waf_detector.detect_waf()
+                if not waf_detector.waf_detected:
+                    sys.stdout.write(f'\033[1;32m[+] No WAF detected\033[0m\n')
+                    sys.stdout.flush()
+            except ImportError:
+                sys.stdout.write(f'\033[1;33m[⚠️] WAF detector not available - continuing without WAF protection\033[0m\n')
                 sys.stdout.flush()
-            # If WAF is detected, don't print anything here
-            # Report will only appear if it actually blocks us during attacks
-                
-        except ImportError:
-            sys.stdout.write(f'\033[1;33m[⚠️] WAF detector not available - continuing without WAF protection\033[0m\n')
-            sys.stdout.flush()
-        except Exception as e:
-            sys.stdout.write(f'\033[1;33m[⚠️] WAF detection error: {e} - continuing scan\033[0m\n')
-            sys.stdout.flush()
+            except Exception as e:
+                sys.stdout.write(f'\033[1;33m[⚠️] WAF detection error: {e} - continuing scan\033[0m\n')
+                sys.stdout.flush()
 
         if param_endpoints:
             uri = list(dict.fromkeys(param_endpoints))
@@ -497,10 +502,6 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
                     urif.append(ep)
             urip = list(dict.fromkeys(urip))
             urif = list(dict.fromkeys(urif))
-            sys.stdout.write(
-                fmt_line("1;36", "[+] Total URLs from list:", str(len(uri))) + "\n"
-            )
-            sys.stdout.flush()
         else:
             uri = parametizer(u, None, threads)
 
@@ -617,17 +618,19 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
         def _in_scope(url_str: str) -> bool:
             return _target_base_domain(url_str) == _target_bd
 
-        urip_cl   = [x for x in urip_cl   if _in_scope(x)]
-        urif_cl   = [x for x in urif_cl   if _in_scope(x)]
-        urip      = [x for x in urip      if _in_scope(x)] if urip else urip
-        urif      = [x for x in urif      if _in_scope(x)] if urif else urif
+        # -p: cada línea del archivo está en alcance. El filtro es para links externos de un crawl.
+        if param_endpoints is None:
+            urip_cl   = [x for x in urip_cl   if _in_scope(x)]
+            urif_cl   = [x for x in urif_cl   if _in_scope(x)]
+            urip      = [x for x in urip      if _in_scope(x)] if urip else urip
+            urif      = [x for x in urif      if _in_scope(x)] if urif else urif
         # ─────────────────────────────────────────────────────────────────────
 
         # CRLF: igual que CORS — si no hay ?params ni forms, probar sobre URLs base recolectadas
         crlf_urip = list(urip) if urip else []
         crlf_urif = list(urif) if urif else []
         if not crlf_urip and not crlf_urif and raw_collected:
-            crlf_urip = [x for x in raw_collected if _in_scope(x)]
+            crlf_urip = list(raw_collected) if param_endpoints is not None else [x for x in raw_collected if _in_scope(x)]
 
         if not has_param_surface and not raw_collected:
             sys.stdout.write(f'\n\033[1;31m[-] No parameters found for {scope_label}\033[0m\n')
@@ -644,7 +647,17 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             continue
 
         if has_param_surface:
-            sys.stdout.write(f'\033[1;36m[+] Found {len(urip)} URLs with parameters and {len(urif)} forms for {scope_label}\033[0m\n')
+            if param_endpoints is not None:
+                sys.stdout.write(
+                    fmt_line(
+                        "1;36",
+                        "[+] Endpoints:",
+                        f"{len(urip)} with query parameters, {len(urif)} without query",
+                    )
+                    + "\n"
+                )
+            else:
+                sys.stdout.write(f'\033[1;36m[+] Found {len(urip)} URLs with parameters and {len(urif)} forms for {scope_label}\033[0m\n')
         sys.stdout.flush()
         print()
          
@@ -914,8 +927,9 @@ def all_list(urls, c, cl, cr, x, xe, l, s, r, rc, sr, sst, fname, o,
             if u in result_savers and result_savers[u] and result_savers[u].save_partial_results(u, f"WAF blocking after {block_handlers[u].block_count} attempts"):
                 saved_any = True
 
-            # If it's the only URL, close the program
-            if total_urls == 1:
+            # If it's the only URL, close the program.
+            # -p siempre entra con total_urls == 1 aunque la lista tenga muchos hosts.
+            if total_urls == 1 and param_endpoints is None:
                 sys.stdout.write(f'\n\033[1;31m🚨 Single target blocked - terminating scan{Style.RESET_ALL}\n')
                 sys.stdout.flush()
                 if saved_any:

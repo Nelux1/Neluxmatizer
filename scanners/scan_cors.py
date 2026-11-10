@@ -1,6 +1,6 @@
 import requests, sys
 from urllib.error import URLError
-from parametizer.progress import update_progress, print_vulnerability
+from parametizer.progress import update_progress, print_vulnerability, start_scan_progress
 from parametizer.core.headers import get_headers
 from colorama import Cursor, init, ansi
 from threading import Lock
@@ -52,6 +52,7 @@ def cors(urip, urif, urls_vulnerables, threads, custom_headers=None, random_agen
     print()
 
     total_tasks = len(urip) + len(urif)
+    start_scan_progress("CORS", total_tasks, 0, total_tasks, threads)
     current = 0
     found = []
     vulnerable_endpoints = set()  # Track vulnerable base URLs

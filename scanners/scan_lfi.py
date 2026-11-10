@@ -1,7 +1,7 @@
 import requests, sys, threading, urllib3, random, urllib.parse, re
 from urllib.parse import urlparse, parse_qs, urljoin, quote_plus
 from bs4 import BeautifulSoup
-from parametizer.progress import update_progress, print_vulnerability
+from parametizer.progress import update_progress, print_vulnerability, start_scan_progress
 from parametizer.core.headers import get_headers
 from colorama import Cursor, Fore, ansi, init
 from threading import Lock
@@ -197,6 +197,7 @@ def lfi(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, random_
     print('\033[1;36m<<<<<<<<<<<<\033[0m Testing Local File Inclusion \033[1;36m>>>>>>>>>>>>>>\033[0m')
     print()
     total_tasks = (len(urip) * 2 + len(urif)) * len(wordlist)
+    start_scan_progress("LFI", len(urip) + len(urif), len(wordlist), total_tasks, threads)
     current = 0
     lock = Lock()
     found = set()

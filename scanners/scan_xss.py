@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs, urljoin, quote
 from parametizer.bounded_pool import run_threadpool_pending_bounded
 from colorama import init, ansi
-from parametizer.progress import update_progress, print_vulnerability
+from parametizer.progress import update_progress, print_vulnerability, start_scan_progress
 from parametizer.core.headers import get_headers
 import urllib3
 try:
@@ -784,6 +784,7 @@ def xss(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
         (len(urip) * 3 + len(urif) * 2) * len(wordlist)   # GET+POST+JSON / FORM+JSON
         + _xss_unique_bases * min(3, len(wordlist))         # Header XSS
     )
+    start_scan_progress("XSS", len(urip) + len(urif), len(wordlist), total, threads)
     current = 0
     found = 0
     lock = threading.Lock()

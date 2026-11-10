@@ -2,7 +2,7 @@ import requests, random, sys, threading, time
 from urllib.parse import urlparse, parse_qs, urlencode, urljoin, quote
 from parametizer.bounded_pool import run_threadpool_pending_bounded
 from colorama import init, ansi
-from parametizer.progress import update_progress, print_vulnerability
+from parametizer.progress import update_progress, print_vulnerability, start_scan_progress
 from parametizer.core.headers import get_headers
 import os
 import sys
@@ -328,6 +328,7 @@ def ssrf(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
         wordlist = oob_payloads + wordlist
 
     total_tasks = (len(urip) * 2 + len(urif)) * len(wordlist)
+    start_scan_progress("SSRF", len(urip) + len(urif), len(wordlist), total_tasks, threads)
     current = 0
     lock = threading.Lock()
     found = []

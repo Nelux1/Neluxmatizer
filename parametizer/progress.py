@@ -14,15 +14,33 @@ def fmt_line(color_code: str, prefix_to_colon: str, body: str) -> str:
 spinner = ['|', '/', '-', '\\']
 spinner_index = 0
 spinner_lock = threading.Lock()
+progress_label = "Testing"
+progress_workers = None
+
+def start_scan_progress(kind, endpoints, payloads, total, workers=None):
+    """Una línea con el total real de pruebas y el spinner de esa fase."""
+    global progress_label, progress_workers, spinner_index
+    if payloads:
+        detail = f"{total}  ({endpoints} endpoints × {payloads} payloads)"
+    else:
+        detail = f"{total}  ({endpoints} endpoints)"
+    sys.stdout.write(fmt_line("1;36", f"[+] {kind} tests:", detail) + "\n")
+    sys.stdout.flush()
+    with spinner_lock:
+        progress_label = f"Testing {kind}"
+        progress_workers = workers if workers and workers > 0 else None
+        spinner_index = 0
 
 def update_progress(current, total):
     global spinner_index
     with spinner_lock:
         spinner_char = spinner[spinner_index % len(spinner)]
         spinner_index += 1
-        #print(f'\r \033[1;36mTesting:\033[0m {spinner_char} {current}/{total} {spinner_char}', end='', flush=True)
+        workers = f"  ×{progress_workers}" if progress_workers else ""
         sys.stdout.write(ansi.clear_line())
-        sys.stdout.write(f'\r \033[1;36mTesting:\033[0m {spinner_char} {current}/{total} {spinner_char}')
+        sys.stdout.write(
+            f'\r \033[1;36m{progress_label}:\033[0m {spinner_char} {current}/{total}{workers}'
+        )
         sys.stdout.flush()
 
 def print_vulnerability(message):

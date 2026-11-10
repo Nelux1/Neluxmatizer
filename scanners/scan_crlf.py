@@ -9,7 +9,7 @@ except ImportError:
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from vulnerability_manager import vuln_manager
-from parametizer.progress import update_progress, print_vulnerability
+from parametizer.progress import update_progress, print_vulnerability, start_scan_progress
 from parametizer.core.headers import get_headers
 from parametizer.bounded_pool import run_threadpool_in_chunks
 from colorama import Fore, ansi, init
@@ -404,6 +404,7 @@ def crlf(urip, urif, urls_vulnerables, threads, custom_headers, random_agent):
         return w
 
     total_tasks = sum(_crlf_progress_weight(u) for u in urip + urif)
+    start_scan_progress("CRLF", len(urip) + len(urif), len(crlf_payloads), total_tasks, threads)
     current = 0
     lock = Lock()
     found_urls = set()

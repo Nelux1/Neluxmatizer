@@ -13,7 +13,7 @@ from vulnerability_manager import vuln_manager
 from parametizer.bounded_pool import run_threadpool_in_chunks
 from threading import Lock
 from parametizer.core.headers import get_headers
-from parametizer.progress import update_progress, print_vulnerability
+from parametizer.progress import update_progress, print_vulnerability, start_scan_progress
 from colorama import init, ansi
 
 init()
@@ -69,6 +69,7 @@ def clickjacking(urip, urif, urls_vulnerables, threads, custom_headers, random_a
 
     # Configuración
     total_tasks = len(urip) + len(urif)
+    start_scan_progress("Clickjacking", total_tasks, 0, total_tasks, threads)
     progress = 0
     found = 0
     lock = Lock()

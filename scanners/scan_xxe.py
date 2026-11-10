@@ -3,7 +3,7 @@ import random
 from urllib.parse import urlparse, urljoin
 from colorama import init, ansi
 from threading import Lock
-from parametizer.progress import update_progress, print_vulnerability
+from parametizer.progress import update_progress, print_vulnerability, start_scan_progress
 from parametizer.core.headers import get_headers
 import os
 import sys
@@ -117,7 +117,7 @@ def xxe(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, ra
         len(wordlist) * (len(urip) + len(urif)) * len(_XML_CONTENT_TYPES)
         + len(unique_hosts) * len(_XML_PROBE_PATHS) * n_probe_payloads * len(_XML_CONTENT_TYPES)
     )
-
+    start_scan_progress("XXE", len(urip) + len(urif), len(wordlist), total_tasks, threads)
     current = 0
     found = 0
     lock = Lock()

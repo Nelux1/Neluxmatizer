@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse, parse_qs, urljoin, quote
 from bs4 import BeautifulSoup
 from colorama import init, ansi
-from parametizer.progress import update_progress, print_vulnerability
+from parametizer.progress import update_progress, print_vulnerability, start_scan_progress
 from parametizer.core.headers import get_headers
 import urllib3
 import threading
@@ -321,6 +321,7 @@ def sqli(urip, urif, wordlist, urls_vulnerables, threads, custom_headers=None, r
         (len(urip) * 3 + len(urif) * 2) * len(wordlist)   # GET+POST+JSON / FORM+JSON
         + _unique_bases * min(3, len(wordlist))             # Header injection
     )
+    start_scan_progress("SQLi", len(urip) + len(urif), len(wordlist), total_tasks, threads)
     current = 0
     lock = threading.Lock()
     vulnerable_endpoints = set()

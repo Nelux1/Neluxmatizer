@@ -288,7 +288,7 @@ def selector():
             sys.exit(1)
         url = [param_endpoints[0]]
         sys.stdout.write(
-            f'{Fore.CYAN}[+] Direct endpoint mode: {len(param_endpoints)} URL(s) from {args.param_file} (no crawl / discovery){Fore.RESET}\n'
+            f'{Fore.CYAN}[+] Direct endpoint mode: {len(param_endpoints)} endpoints from {args.param_file}{Fore.RESET}\n'
         )
         sys.stdout.flush()
         if len(param_endpoints) > 150_000:

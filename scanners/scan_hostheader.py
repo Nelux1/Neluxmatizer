@@ -6,7 +6,7 @@ import secrets
 import urllib3
 from urllib.parse import urlparse
 from colorama import init, ansi
-from parametizer.progress import update_progress, print_vulnerability
+from parametizer.progress import update_progress, print_vulnerability, start_scan_progress
 from parametizer.core.headers import get_headers
 from parametizer.bounded_pool import run_threadpool_pending_bounded
 try:
@@ -81,6 +81,7 @@ def hostheader_injection(
     vulnerable_domains: set = set()
 
     total = len(candidate_urls)
+    start_scan_progress("Host header", total, 0, total, threads)
     current = 0
     found = 0
     lock = threading.Lock()

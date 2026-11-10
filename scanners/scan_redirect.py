@@ -3,7 +3,7 @@ import re
 from urllib.parse import urlparse, parse_qs, urlencode
 from parametizer.bounded_pool import run_threadpool_tasks_in_chunks
 import random, sys, os, threading
-from parametizer.progress import update_progress, print_vulnerability
+from parametizer.progress import update_progress, print_vulnerability, start_scan_progress
 from parametizer.core.headers import get_headers
 from colorama import Cursor, ansi, init
 try:
@@ -86,6 +86,7 @@ def redirect(urip, urif, wordlist, urls_vulnerables, threads, custom_headers, ra
     print()
     sys.stdout.flush()
     total_tasks = len(wordlist) * len(urip)
+    start_scan_progress("Open redirect", len(urip), len(wordlist), total_tasks, threads)
     current = 0
     found = []
     vulnerable_endpoints = set()
